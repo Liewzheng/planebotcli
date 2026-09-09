@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-09
+
 ### Added
 - `planecli intake` command group: `ls`, `create`, `accept`, `decline`, `delete`, `enabled` for project intake queues. Mutations take the work item UUID shown in the `Issue ID` column of `intake ls`. `accept`/`decline` require the project Admin role (the API silently ignores the change for lower roles, so the CLI verifies it and fails loudly). `delete` also permanently deletes the underlying work item for any status other than `accepted`
+- `planecli attachment` command group: `ls` lists a work item's attachments and `attach` uploads a local file (asks for confirmation when the name already exists, `--force` to skip)
+- `-i` / `--image` repeatable flag on `wi create` and `wi update`: uploads an image and embeds it in the description as an `img` tag
+- `--start-date` / `--target-date` flags on `wi create` and `wi update` (YYYY-MM-DD, validated client-side with exit code 5 on a bad format; writes are verified by read-back per ADR-0007)
+
+### Fixed
+- Comment bodies now render as separate paragraphs and line breaks instead of being joined into a single paragraph; inline backtick spans render as code and bare http(s) URLs become clickable anchors (code content is HTML-escaped and URLs inside code spans are not linkified)
+- `wi show` `*_name` fields (`state_detail_name`, `label_names`, `label_detail_names`, `assignee_names`) now resolve to human-readable names like `wi ls` does, instead of raw UUIDs
+- `doc create` no longer crashes when `--content` is omitted (an empty paragraph is sent instead of a missing required field); `--content` converts plain text to HTML the same way comments do (paragraphs, line breaks, code, links); `doc delete` archives the page before deleting it, so it succeeds instead of returning a 400
 
 ## [0.5.1] - 2026-07-03
 

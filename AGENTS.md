@@ -61,6 +61,19 @@ Request flow: **command → resolve → async SDK wrapper → (cache | Plane SDK
 - **Reference versioned docs, not tracker issues.** Do not cite Plane/Linear issue IDs or external tracker URLs in code comments — they are unreachable after delivery. Point to an ADR or guide instead.
 - **Tests never hit a real Plane instance.** `conftest.py` autouses a `mem://` cache backend and provides a `mock_plane_client` fixture. Mock the SDK/resolvers; prefer testing pure logic (normalizers, fuzzy matching, resolution) directly.
 
+## Release management
+
+The release repo `github.com/Liewzheng/planebotcli` keeps a single `main` that mirrors the local
+`integration-main` branch (upstream `main` + every adapted feature/fix branch, history preserved).
+Version and changelog are managed by the agent on `integration-main` only — never on upstream
+`main` or on the fork PR branches.
+
+- Keep SemVer: bump the minor for new commands/flags, the patch for bug fixes. Edit the version in
+  `pyproject.toml` **and** in the `planecli` package entry of `uv.lock` together.
+- Append a Keep a Changelog section to `CHANGELOG.md` in upstream style, without internal tracker IDs.
+- Cut a release by committing `release: <version>` on `integration-main` and pushing it to the
+  planebotcli remote's `main`: `git push planebotcli integration-main:main`.
+
 ## Key docs
 
 - [Architecture](docs/architecture.md) — layers and request flow

@@ -29,8 +29,6 @@ fn stdout_of(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
-const USER: &str =
-    r#"{"id":"u1","display_name":"Bot","first_name":"B","last_name":"","email":"b@x"}"#;
 const MEMBERS: &str =
     r#"[{"id":"u1","display_name":"Bot","first_name":"B","last_name":"","email":"b@x"}]"#;
 const PROJECTS: &str = r#"{"results":[{"id":"p1","name":"Demo","identifier":"DEMO","created_at":"2026-01-01T00:00:00Z"}],"next_cursor":null,"next_page_results":false}"#;

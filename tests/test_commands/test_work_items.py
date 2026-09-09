@@ -1182,6 +1182,65 @@ class TestWiFields:
         assert result["estimate_display"] == ""
 
 
+class TestEnrichWebUrl:
+    """Tests for the web_url convenience field."""
+
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_config")
+    def test_sets_web_url_with_correct_shape(self, mock_config, mock_ws):
+        """web_url should combine base_url, workspace, and both UUIDs."""
+        mock_config.return_value.base_url = "https://plane.example.com/"
+        data = {"id": "issue-uuid-1", "project": "project-uuid-1"}
+        result = _enrich_work_item(data)
+        assert (
+            result["web_url"]
+            == "https://plane.example.com/test-ws/projects/project-uuid-1/issues/issue-uuid-1/"
+        )
+
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_config")
+    def test_strips_trailing_slash_from_base_url(self, mock_config, mock_ws):
+        """A base_url ending in '/' should not produce a double slash."""
+        mock_config.return_value.base_url = "https://plane.example.com///"
+        data = {"id": "issue-uuid-1", "project": "project-uuid-1"}
+        result = _enrich_work_item(data)
+        assert result["web_url"].startswith("https://plane.example.com/test-ws/")
+
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_config")
+    def test_missing_project_leaves_web_url_unset(self, mock_config, mock_ws):
+        """Without a project UUID, web_url should be absent."""
+        mock_config.return_value.base_url = "https://plane.example.com"
+        data = {"id": "issue-uuid-1"}
+        result = _enrich_work_item(data)
+        assert "web_url" not in result
+
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_config")
+    def test_missing_id_leaves_web_url_unset(self, mock_config, mock_ws):
+        """Without an issue UUID, web_url should be absent."""
+        mock_config.return_value.base_url = "https://plane.example.com"
+        data = {"project": "project-uuid-1"}
+        result = _enrich_work_item(data)
+        assert "web_url" not in result
+
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_config")
+    def test_unavailable_config_leaves_web_url_unset(self, mock_config, mock_ws):
+        """A config error should not crash enrichment; web_url stays absent."""
+        from planecli.exceptions import AuthenticationError
+
+        mock_config.side_effect = AuthenticationError("Missing base URL.")
+        data = {"id": "issue-uuid-1", "project": "project-uuid-1"}
+        result = _enrich_work_item(data)
+        assert "web_url" not in result
+
+    def test_web_url_in_detail_fields(self):
+        """web_url should be included in WI_FIELDS for detail view."""
+        field_keys = [f[0] for f in WI_FIELDS]
+        assert "web_url" in field_keys
+
+
 class TestWiShow:
     """Tests for the wi show command (with bundled comments)."""
 

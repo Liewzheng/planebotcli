@@ -663,6 +663,99 @@ impl PlaneClient {
         result.map(|_| ())
     }
 
+    /// Register a description-embed image on the app assets v2 endpoint:
+    /// `POST {base}/api/assets/v2/workspaces/{ws}/projects/{pid}/` with
+    /// `{name, type, size, entity_type: "ISSUE_DESCRIPTION",
+    /// entity_identifier: <work item id>}`.
+    ///
+    /// The endpoint is session-only on many deployments and answers
+    /// 401/403/404, so the raw status is returned for the caller to fall back
+    /// to a v1 ISSUE_ATTACHMENT upload (mirrors the Python
+    /// `upload_embed_image`, which POSTs to the same URL and payload).
+    pub async fn register_description_asset(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+        name: &str,
+        mime: &str,
+        size: u64,
+    ) -> Result<(u16, serde_json::Value), PlaneError> {
+        let url = format!(
+            "{}/api/assets/v2/workspaces/{}/projects/{}/",
+            self.base_url, self.workspace, project_id
+        );
+        let body = serde_json::json!({
+            "name": name,
+            "type": mime,
+            "size": size,
+            "entity_type": "ISSUE_DESCRIPTION",
+            "entity_identifier": work_item_id,
+        });
+        self.app_json(reqwest::Method::POST, &url, Some(&body))
+            .await
+    }
+
+    /// `PATCH {assets-v2 base}/{asset_id}/` with `{"is_uploaded": true}` —
+    /// mark a description asset uploaded.
+    ///
+    /// Like the v1 attachment PATCH, a 2xx is not proof the write landed
+    /// (ADR-0007); callers read the asset back afterwards.
+    pub async fn confirm_description_asset(
+        &self,
+        project_id: &str,
+        asset_id: &str,
+    ) -> Result<(u16, serde_json::Value), PlaneError> {
+        let url = format!(
+            "{}/api/assets/v2/workspaces/{}/projects/{}/{}/",
+            self.base_url, self.workspace, project_id, asset_id
+        );
+        let body = serde_json::json!({ "is_uploaded": true });
+        self.app_json(reqwest::Method::PATCH, &url, Some(&body))
+            .await
+    }
+
+    /// `GET {base}/api/v1/workspaces/{ws}/assets/{asset_id}/` — read a single
+    /// asset back through the workspace-scoped generic-asset endpoint (works
+    /// for any entity type). Raw status so the caller can reject an upload the
+    /// server did not actually confirm.
+    pub async fn get_workspace_asset(
+        &self,
+        asset_id: &str,
+    ) -> Result<(u16, serde_json::Value), PlaneError> {
+        let url = format!(
+            "{}/api/v1/workspaces/{}/assets/{}/",
+            self.base_url, self.workspace, asset_id
+        );
+        self.app_json(reqwest::Method::GET, &url, None).await
+    }
+
+    /// Raw authenticated JSON request to a full URL (the app endpoints are not
+    /// under `/api/v1`), returning the status and parsed body without retries
+    /// or error mapping — callers branch on status codes (fallbacks) that
+    /// `request_json` would collapse into a typed error.
+    async fn app_json(
+        &self,
+        method: reqwest::Method,
+        url: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<(u16, serde_json::Value), PlaneError> {
+        let mut req = self
+            .http
+            .request(method, url)
+            .header("X-Api-Key", &self.api_key)
+            .header("Content-Type", "application/json");
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+        let resp = req.send().await.map_err(|e| PlaneError::Api {
+            message: format!("request to {url} failed: {e}"),
+        })?;
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap_or_default();
+        let value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
+        Ok((status, value))
+    }
+
     /// `GET .../projects/{pid}/modules/` — all pages (cached).
     pub async fn list_modules(&self, project_id: &str) -> Result<Vec<Module>, PlaneError> {
         let key = format!("modules:{}:{}", self.workspace, project_id);

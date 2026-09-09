@@ -15,9 +15,9 @@ use planebotcli_resolve::{
     locate_work_item_across, locate_work_item_in_project, resolve_project, resolve_user_query,
 };
 use planebotcli_types::{
-    CommentWrite, Cycle, CycleWrite, IntakeIssueWrite, IntakeItem, IntakeWrite, Label, LabelWrite,
-    Module, ModuleWrite, Page, PageWrite, Project, ProjectWrite, State, StateWrite, WorkItem,
-    WorkItemWrite,
+    Attachment, CommentWrite, Cycle, CycleWrite, IntakeIssueWrite, IntakeItem, IntakeWrite, Label,
+    LabelWrite, Module, ModuleWrite, Page, PageWrite, Project, ProjectWrite, State, StateWrite,
+    WorkItem, WorkItemWrite,
 };
 use render::{
     Lookups, attachment_json, comment_json, intake_status_label, intake_view, work_item_view,
@@ -741,6 +741,14 @@ pub enum WiCmd {
         /// Target end date (YYYY-MM-DD).
         #[arg(long)]
         target_date: Option<String>,
+        /// Image file path to embed in the description (repeatable). The image
+        /// is uploaded and an img tag is appended to the description.
+        #[arg(long, short = 'i')]
+        image: Vec<String>,
+        /// Upload images even if an attachment with the same file name already
+        /// exists.
+        #[arg(long)]
+        force: bool,
     },
     /// Update a work item.
     Update {
@@ -781,6 +789,15 @@ pub enum WiCmd {
         /// New target end date (YYYY-MM-DD).
         #[arg(long)]
         target_date: Option<String>,
+        /// Image file path to embed in the description (repeatable). The image
+        /// is uploaded and appended to the existing description, or to the new
+        /// --description (or --desc-md) if one is given.
+        #[arg(long, short = 'i')]
+        image: Vec<String>,
+        /// Upload images even if an attachment with the same file name already
+        /// exists.
+        #[arg(long)]
+        force: bool,
     },
     /// Delete a work item.
     Delete {
@@ -911,6 +928,8 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 desc_md,
                 start_date,
                 target_date,
+                image,
+                force,
             } => {
                 let opts = CreateOpts {
                     project: project.as_deref(),
@@ -923,6 +942,8 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     desc_md: desc_md.as_deref(),
                     start_date: start_date.as_deref(),
                     target_date: target_date.as_deref(),
+                    image: &image,
+                    force,
                 };
                 cmd_wi_create(&client, &cfg.base_url, &title, &opts, cli.json).await
             }
@@ -939,6 +960,8 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 desc_md,
                 start_date,
                 target_date,
+                image,
+                force,
             } => {
                 let opts = UpdateOpts {
                     project: project.as_deref(),
@@ -952,6 +975,8 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     desc_md: desc_md.as_deref(),
                     start_date: start_date.as_deref(),
                     target_date: target_date.as_deref(),
+                    image: &image,
+                    force,
                 };
                 cmd_wi_update(&client, &cfg.base_url, &issue, &opts, cli.json).await
             }
@@ -1855,6 +1880,9 @@ struct CreateOpts<'a> {
     desc_md: Option<&'a str>,
     start_date: Option<&'a str>,
     target_date: Option<&'a str>,
+    /// Image paths to upload and embed in the description (`-i`, repeatable).
+    image: &'a [String],
+    force: bool,
 }
 
 /// Options for `wi update`.
@@ -1870,6 +1898,9 @@ struct UpdateOpts<'a> {
     desc_md: Option<&'a str>,
     start_date: Option<&'a str>,
     target_date: Option<&'a str>,
+    /// Image paths to upload and embed in the description (`-i`, repeatable).
+    image: &'a [String],
+    force: bool,
 }
 
 /// `--description` and `--desc-md` are mutually exclusive (Python message).
@@ -1884,6 +1915,36 @@ fn validate_description_flags(
         ));
     }
     Ok(())
+}
+
+/// Seed the description parts that `-i/--image` img tags are appended to,
+/// mirroring the Python precedence exactly: `--desc-md` wins over a non-empty
+/// `--description`, and `existing` (the stored `description_html`, update
+/// only) is the last fallback.
+fn embed_seed_parts(
+    desc_md: Option<&str>,
+    description: Option<&str>,
+    existing: Option<&str>,
+) -> Vec<String> {
+    let mut parts = Vec::new();
+    if let Some(md) = desc_md {
+        parts.push(planebotcli_html::md_to_html(md));
+    } else if let Some(description) = description.filter(|d| !d.is_empty()) {
+        parts.push(format!("<p>{description}</p>"));
+    } else if let Some(existing) = existing {
+        parts.push(existing.to_string());
+    }
+    parts
+}
+
+/// `<p><img src="{asset_id}" /></p>` — embed an uploaded asset in a work item
+/// description.
+///
+/// The web editor stores the asset UUID in `src` and resolves it at render
+/// time; a full path or URL here is mistaken for an asset id and the image
+/// fails to load (Python `embed_html`).
+fn embed_html(asset_id: &str) -> String {
+    format!(r#"<p><img src="{asset_id}" /></p>"#)
 }
 
 /// Validate a YYYY-MM-DD date flag; None passes through.
@@ -2035,8 +2096,12 @@ async fn cmd_wi_create(
     };
     if let Some(md) = opts.desc_md {
         write.description_html = Some(planebotcli_html::md_to_html(md));
-    } else if let Some(description) = opts.description {
-        write.description_html = Some(format!("<p>{description}</p>"));
+    } else if opts.image.is_empty() {
+        // With `-i` the description is seeded into the follow-up PATCH instead
+        // (Python: `elif description and not image`).
+        if let Some(description) = opts.description {
+            write.description_html = Some(format!("<p>{description}</p>"));
+        }
     }
     if let Some(p) = priority {
         write.priority = Some(p);
@@ -2063,10 +2128,32 @@ async fn cmd_wi_create(
     }
 
     let created = client.create_work_item(&project_id, &write).await?;
+
+    // Embed images: the item is created first (uploads need the issue to
+    // exist), then each image is uploaded and its img tag is appended to the
+    // description via a follow-up PATCH (Python `wi create` image flow).
+    let final_item = if opts.image.is_empty() {
+        created
+    } else {
+        let mut parts = embed_seed_parts(opts.desc_md, opts.description, None);
+        for path in opts.image {
+            let asset_id =
+                upload_embed_image(client, &project_id, &created.id, path, opts.force).await?;
+            parts.push(embed_html(&asset_id));
+        }
+        let image_write = WorkItemWrite {
+            description_html: Some(parts.concat()),
+            ..Default::default()
+        };
+        client
+            .update_work_item(&project_id, &created.id, &image_write)
+            .await?
+    };
+
     output_work_item_view(
         client,
         base_url,
-        &created,
+        &final_item,
         &project_identifier,
         json,
         "Work Item Created",
@@ -2097,7 +2184,23 @@ async fn cmd_wi_update(
     if let Some(name) = opts.name {
         write.name = Some(name.to_string());
     }
-    if let Some(md) = opts.desc_md {
+    if !opts.image.is_empty() {
+        // Embed images: upload each, then append its img tag — to the new
+        // --description (or --desc-md) when given, otherwise to the existing
+        // stored description_html (Python `wi update` image flow). All fields
+        // land in the single PATCH below.
+        let mut parts = embed_seed_parts(
+            opts.desc_md,
+            opts.description,
+            located.item.description_html.as_deref(),
+        );
+        for path in opts.image {
+            let asset_id =
+                upload_embed_image(client, &project_id, &located.item.id, path, opts.force).await?;
+            parts.push(embed_html(&asset_id));
+        }
+        write.description_html = Some(parts.concat());
+    } else if let Some(md) = opts.desc_md {
         write.description_html = Some(planebotcli_html::md_to_html(md));
     } else if let Some(description) = opts.description {
         write.description_html = Some(format!("<p>{description}</p>"));
@@ -2456,21 +2559,19 @@ async fn cmd_attachment_list(
     Ok(())
 }
 
-/// Upload a file to a work item (mirrors the Python `upload_attachment`):
-/// duplicate-name check -> register -> presigned push -> finalize -> read the
-/// list back and verify the asset landed (a 2xx is not proof of a write, see
-/// ADR-0007).
-async fn cmd_attachment_attach(
-    client: &PlaneClient,
-    issue: &str,
-    file: &str,
-    project: Option<&str>,
-    force: bool,
-    json: bool,
-) -> Result<(), PlaneError> {
-    let located = locate_issue(client, issue, project).await?;
+/// A locally preflighted upload file: the display name, guessed MIME type,
+/// byte count, and filesystem path (Python's isfile/getsize/_guess_mime
+/// triple).
+struct UploadFile<'a> {
+    path: &'a Path,
+    name: String,
+    mime: String,
+    size: u64,
+}
 
-    // Preflight the file, mirroring the Python os.path.isfile/getsize checks.
+/// Validate that `file` names an existing regular file and gather what the
+/// upload endpoints need (Python's os.path.isfile/getsize + `_guess_mime`).
+fn preflight_upload(file: &str) -> Result<UploadFile<'_>, PlaneError> {
     let path = Path::new(file);
     let meta = std::fs::metadata(path).map_err(|_| PlaneError::Validation {
         message: format!("File not found: {file}"),
@@ -2491,29 +2592,48 @@ async fn cmd_attachment_attach(
             hint: None,
         })?
         .to_string();
-    let size = meta.len();
     let mime = guess_mime(&name);
+    Ok(UploadFile {
+        path,
+        name,
+        mime,
+        size: meta.len(),
+    })
+}
 
+/// v1 ISSUE_ATTACHMENT upload shared by `attachment attach` and the `-i`
+/// fallback: duplicate-name check -> register -> presigned push -> finalize ->
+/// read the list back and verify the asset landed (a 2xx is not proof of a
+/// write, see ADR-0007). Mirrors the Python `upload_attachment`; the Rust
+/// convention refuses duplicates instead of prompting.
+async fn upload_attachment_v1(
+    client: &PlaneClient,
+    project_id: &str,
+    work_item_id: &str,
+    file: &UploadFile<'_>,
+    force: bool,
+) -> Result<Attachment, PlaneError> {
     // Duplicate guard: same-named attachments are easy to create by accident
     // and hard to tell apart in the web UI (deleting the wrong one breaks
     // embedded images). Refuse unless --force.
-    let listed = client
-        .list_attachments(&located.project_id, &located.item.id)
-        .await?;
+    let listed = client.list_attachments(project_id, work_item_id).await?;
     let existing = listed
         .iter()
-        .filter(|a| !a.is_deleted.unwrap_or(false) && a.name() == name)
+        .filter(|a| !a.is_deleted.unwrap_or(false) && a.name() == file.name)
         .count();
     if existing > 0 && !force {
         return Err(PlaneError::Validation {
-            message: format!("Upload cancelled: '{name}' is already attached ({existing}x)."),
+            message: format!(
+                "Upload cancelled: '{}' is already attached ({existing}x).",
+                file.name
+            ),
             hint: Some("Re-run with --force to upload anyway.".into()),
         });
     }
 
     // 1. Register the attachment -> a presigned upload target + asset id.
     let created = client
-        .register_attachment(&located.project_id, &located.item.id, &name, &mime, size)
+        .register_attachment(project_id, work_item_id, &file.name, &file.mime, file.size)
         .await?;
     let asset_id = created
         .get("asset_id")
@@ -2529,30 +2649,120 @@ async fn cmd_attachment_attach(
 
     // 2. Push the bytes to the presigned URL. The signature lives in the
     // multipart form fields — no X-Api-Key header on this request.
-    let bytes = std::fs::read(path).map_err(|e| PlaneError::Api {
-        message: format!("failed to read {file}: {e}"),
+    let bytes = std::fs::read(file.path).map_err(|e| PlaneError::Api {
+        message: format!("failed to read {}: {e}", file.path.display()),
     })?;
     client
-        .upload_to_presigned(upload_data, &name, &mime, bytes)
+        .upload_to_presigned(upload_data, &file.name, &file.mime, bytes)
         .await?;
 
     // 3. Mark the attachment uploaded, then read the list back and verify the
     // asset is present with is_uploaded=true (see ADR-0007).
     client
-        .finalize_attachment(&located.project_id, &located.item.id, &asset_id)
+        .finalize_attachment(project_id, work_item_id, &asset_id)
         .await?;
-    let after = client
-        .list_attachments(&located.project_id, &located.item.id)
-        .await?;
+    let after = client.list_attachments(project_id, work_item_id).await?;
     let mine = after
         .iter()
         .find(|a| a.id == asset_id && a.is_uploaded.unwrap_or(false))
+        .cloned()
         .ok_or_else(|| PlaneError::Api {
             message: "Attachment was not confirmed by the server after upload.".into(),
         })?;
+    Ok(mine)
+}
+
+/// Upload an image for description embedding and return the asset UUID
+/// (mirrors the Python `upload_embed_image`).
+///
+/// Prefers the native app assets v2 endpoint (`entity_type=ISSUE_DESCRIPTION`
+/// — the image renders inline and does not clutter the attachment list).
+/// Deployments whose app endpoints are session-only answer 401/403/404, in
+/// which case the upload falls back to a v1 ISSUE_ATTACHMENT.
+async fn upload_embed_image(
+    client: &PlaneClient,
+    project_id: &str,
+    work_item_id: &str,
+    file: &str,
+    force: bool,
+) -> Result<String, PlaneError> {
+    let file = preflight_upload(file)?;
+
+    // Try the app assets v2 endpoint first; the raw status decides the
+    // fallback (the endpoint is session-only on many deployments).
+    let (status, created) = client
+        .register_description_asset(project_id, work_item_id, &file.name, &file.mime, file.size)
+        .await?;
+    if matches!(status, 401 | 403 | 404) {
+        let attachment =
+            upload_attachment_v1(client, project_id, work_item_id, &file, force).await?;
+        return Ok(attachment.id);
+    }
+    if status != 200 {
+        return Err(PlaneError::Api {
+            message: format!("Asset upload failed: HTTP {status}"),
+        });
+    }
+
+    let asset_id = created
+        .get("asset_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| PlaneError::Api {
+            message: "the asset register response did not include an asset id.".into(),
+        })?
+        .to_string();
+    let upload_data = created.get("upload_data").ok_or_else(|| PlaneError::Api {
+        message: "the asset register response did not include presigned upload data.".into(),
+    })?;
+
+    // Push the bytes to the presigned URL (signature lives in the fields).
+    let bytes = std::fs::read(file.path).map_err(|e| PlaneError::Api {
+        message: format!("failed to read {}: {e}", file.path.display()),
+    })?;
+    client
+        .upload_to_presigned(upload_data, &file.name, &file.mime, bytes)
+        .await?;
+
+    let (status, _) = client
+        .confirm_description_asset(project_id, &asset_id)
+        .await?;
+    if !matches!(status, 200 | 204) {
+        return Err(PlaneError::Api {
+            message: format!("Asset confirm failed: HTTP {status}"),
+        });
+    }
+
+    // A 2xx on the confirm PATCH is not proof the write landed (ADR-0007):
+    // read the asset back through the v1 workspace-scoped asset endpoint.
+    let (status, _) = client.get_workspace_asset(&asset_id).await?;
+    if status != 200 {
+        return Err(PlaneError::Api {
+            message: "Image asset was not confirmed by the server after upload.".into(),
+        });
+    }
+    Ok(asset_id)
+}
+
+/// Upload a file to a work item (mirrors the Python `upload_attachment`):
+/// preflight -> [`upload_attachment_v1`] -> output.
+async fn cmd_attachment_attach(
+    client: &PlaneClient,
+    issue: &str,
+    file: &str,
+    project: Option<&str>,
+    force: bool,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let located = locate_issue(client, issue, project).await?;
+    let file = preflight_upload(file)?;
+    let size = file.size;
+    let name = file.name.clone();
+
+    let mine =
+        upload_attachment_v1(client, &located.project_id, &located.item.id, &file, force).await?;
 
     if json {
-        output_json(&attachment_json(mine));
+        output_json(&attachment_json(&mine));
     } else {
         eprintln!("Attached {name} ({size} bytes) to {issue}.");
     }
@@ -4159,5 +4369,46 @@ mod tests {
         assert_eq!(guess_mime("noextension"), "application/octet-stream");
         assert_eq!(guess_mime("mystery.xyz"), "application/octet-stream");
         assert_eq!(guess_mime(""), "application/octet-stream");
+    }
+
+    #[test]
+    fn embed_html_holds_only_the_asset_uuid_in_src() {
+        // The web editor resolves an asset UUID in `src` at render time; a
+        // full path/URL renders "Error loading image" (Python `embed_html`).
+        assert_eq!(
+            embed_html("a3f1c2d4-0000-4000-8000-1234567890ab"),
+            r#"<p><img src="a3f1c2d4-0000-4000-8000-1234567890ab" /></p>"#
+        );
+    }
+
+    #[test]
+    fn embed_seed_desc_md_wins_over_description() {
+        let parts = embed_seed_parts(Some("## Title"), Some("plain text"), None);
+        assert_eq!(parts, vec!["<h2>Title</h2>"]);
+    }
+
+    #[test]
+    fn embed_seed_plain_description_is_wrapped() {
+        let parts = embed_seed_parts(None, Some("hello"), None);
+        assert_eq!(parts, vec!["<p>hello</p>"]);
+    }
+
+    #[test]
+    fn embed_seed_empty_description_falls_back_to_existing() {
+        let parts = embed_seed_parts(None, Some(""), Some("<p>old</p>"));
+        assert_eq!(parts, vec!["<p>old</p>"]);
+    }
+
+    #[test]
+    fn embed_seed_update_appends_to_existing_description() {
+        let parts = embed_seed_parts(None, None, Some("<p>old</p>"));
+        assert_eq!(parts, vec!["<p>old</p>"]);
+    }
+
+    #[test]
+    fn embed_seed_create_without_description_starts_empty() {
+        // Create has no `existing` fallback: images only, no leading text.
+        assert!(embed_seed_parts(None, None, None).is_empty());
+        assert!(embed_seed_parts(None, Some(""), None).is_empty());
     }
 }

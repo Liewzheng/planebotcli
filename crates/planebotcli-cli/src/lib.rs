@@ -13,7 +13,7 @@ use planebotcli_format::{output_json, output_table};
 use planebotcli_resolve::{
     locate_work_item_across, locate_work_item_in_project, resolve_project, resolve_user_query,
 };
-use planebotcli_types::{Project, WorkItem};
+use planebotcli_types::{CommentWrite, Project, WorkItem};
 use render::{Lookups, comment_json, work_item_view};
 use serde_json::Value;
 
@@ -54,6 +54,64 @@ pub enum Command {
     Wi {
         #[command(subcommand)]
         command: WiCmd,
+    },
+    /// Manage comments on work items.
+    Comment {
+        #[command(subcommand)]
+        command: CommentCmd,
+    },
+}
+
+/// Options shared by every `comment` command.
+#[derive(Subcommand)]
+pub enum CommentCmd {
+    /// List comments on a work item.
+    #[command(alias = "ls")]
+    List {
+        /// Work item identifier (ABC-123), UUID, or name.
+        issue: String,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Maximum results to show.
+        #[arg(long, short = 'l')]
+        limit: Option<usize>,
+    },
+    /// Add a comment to a work item.
+    Create {
+        /// Work item identifier (ABC-123), UUID, or name.
+        issue: String,
+        /// Comment text (plain text, converted to HTML).
+        #[arg(long, short = 'b')]
+        body: Option<String>,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Update a comment on a work item.
+    Update {
+        /// Comment UUID.
+        comment_id: String,
+        /// Work item identifier (ABC-123), UUID, or name.
+        #[arg(long)]
+        issue: String,
+        /// New comment text (plain text, converted to HTML).
+        #[arg(long, short = 'b')]
+        body: String,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Delete a comment from a work item.
+    Delete {
+        /// Comment UUID.
+        comment_id: String,
+        /// Work item identifier (ABC-123), UUID, or name.
+        #[arg(long)]
+        issue: String,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
     },
 }
 
@@ -150,6 +208,54 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 )
                 .await
             }
+        },
+        Command::Comment { command } => match command {
+            CommentCmd::List {
+                issue,
+                project,
+                limit,
+            } => {
+                cmd_comment_list(
+                    &client,
+                    &issue,
+                    project.as_deref(),
+                    limit.unwrap_or(50),
+                    cli.json,
+                )
+                .await
+            }
+            CommentCmd::Create {
+                issue,
+                body,
+                project,
+            } => {
+                let body = body.ok_or_else(|| PlaneError::Validation {
+                    message: "Missing --body for comment create.".into(),
+                    hint: Some("Example: planebotcli comment create PROJ-1 --body \"text\"".into()),
+                })?;
+                cmd_comment_write(&client, &issue, project.as_deref(), None, &body, cli.json).await
+            }
+            CommentCmd::Update {
+                comment_id,
+                issue,
+                body,
+                project,
+            } => {
+                cmd_comment_write(
+                    &client,
+                    &issue,
+                    project.as_deref(),
+                    Some(&comment_id),
+                    &body,
+                    cli.json,
+                )
+                .await
+            }
+            CommentCmd::Delete {
+                comment_id,
+                issue,
+                project,
+            } => cmd_comment_delete(&client, &issue, project.as_deref(), &comment_id).await,
         },
     }
 }
@@ -518,6 +624,134 @@ async fn cmd_wi_show(
             }
         }
     }
+    Ok(())
+}
+
+/// Locate a work item reference, project-scoped when `-p` is given.
+async fn locate_issue(
+    client: &PlaneClient,
+    issue: &str,
+    project: Option<&str>,
+) -> Result<planebotcli_resolve::LocatedWorkItem, PlaneError> {
+    match project {
+        Some(p) => {
+            let proj = resolve_project(p, client).await?;
+            let mut found = locate_work_item_in_project(issue, &proj, client).await?;
+            if found.project_id.is_empty() {
+                found.project_id = proj.id.clone();
+            }
+            Ok(found)
+        }
+        None => locate_work_item_across(issue, client).await,
+    }
+}
+
+async fn cmd_comment_list(
+    client: &PlaneClient,
+    issue: &str,
+    project: Option<&str>,
+    limit: usize,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let located = locate_issue(client, issue, project).await?;
+    let mut comments = client
+        .list_comments(&located.project_id, &located.item.id)
+        .await?;
+    let members = client.list_members().await?;
+    let member_map: HashMap<String, String> = members
+        .into_iter()
+        .map(|m| {
+            let name = m.full_name();
+            (m.id, name)
+        })
+        .collect();
+
+    // Newest `limit`, rendered oldest → newest.
+    comments.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    let start = comments.len().saturating_sub(limit);
+    let views: Vec<Value> = comments[start..]
+        .iter()
+        .map(|c| comment_json(c, &member_map))
+        .collect();
+
+    if json {
+        output_json(&views);
+    } else {
+        let rows: Vec<Vec<String>> = views
+            .iter()
+            .map(|c| {
+                vec![
+                    fmt_ts(c["created_at"].as_str().unwrap_or("")),
+                    c["actor_name"].as_str().unwrap_or("").to_string(),
+                    c["comment_stripped"].as_str().unwrap_or("").to_string(),
+                ]
+            })
+            .collect();
+        output_table(&["Created", "Actor", "Comment"], &rows);
+    }
+    Ok(())
+}
+
+/// Create or update a comment (create when `comment_id` is None).
+async fn cmd_comment_write(
+    client: &PlaneClient,
+    issue: &str,
+    project: Option<&str>,
+    comment_id: Option<&str>,
+    body: &str,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let located = locate_issue(client, issue, project).await?;
+    let comment_html = planebotcli_html::body_to_html(body);
+    let write = CommentWrite { comment_html };
+    let created = match comment_id {
+        None => {
+            client
+                .create_comment(&located.project_id, &located.item.id, &write)
+                .await?
+        }
+        Some(cid) => {
+            client
+                .update_comment(&located.project_id, &located.item.id, cid, &write)
+                .await?
+        }
+    };
+    let members = client.list_members().await?;
+    let member_map: HashMap<String, String> = members
+        .into_iter()
+        .map(|m| {
+            let name = m.full_name();
+            (m.id, name)
+        })
+        .collect();
+    let view = comment_json(&created, &member_map);
+    if json {
+        output_json(&view);
+    } else {
+        eprintln!(
+            "Comment {} {}.",
+            view["id"],
+            if comment_id.is_none() {
+                "added"
+            } else {
+                "updated"
+            }
+        );
+    }
+    Ok(())
+}
+
+async fn cmd_comment_delete(
+    client: &PlaneClient,
+    issue: &str,
+    project: Option<&str>,
+    comment_id: &str,
+) -> Result<(), PlaneError> {
+    let located = locate_issue(client, issue, project).await?;
+    client
+        .delete_comment(&located.project_id, &located.item.id, comment_id)
+        .await?;
+    eprintln!("Comment {comment_id} deleted.");
     Ok(())
 }
 

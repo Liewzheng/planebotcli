@@ -1337,3 +1337,90 @@ mod tests {
         assert!(detail.len() <= 200);
     }
 }
+
+#[cfg(test)]
+mod http_tests {
+    //! Command-layer HTTP tests against a lightweight mock server (mockito).
+    //! Pins URL building, parsing, and error mapping without a real instance.
+    use super::*;
+    use planebotcli_core::Config;
+
+    fn cfg(base: &str) -> Config {
+        Config {
+            base_url: base.to_string(),
+            api_key: "test-key".into(),
+            workspace: "ws".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn get_me_parses_user() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/users/me/")
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"id":"u1","display_name":"Bot","first_name":"B","last_name":"","email":"b@x"}"#,
+            )
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let me = client.get_me().await.unwrap();
+        assert_eq!(me.id, "u1");
+        assert_eq!(me.display_name.as_deref(), Some("Bot"));
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn list_projects_parses_results() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/projects/")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"results":[{"id":"p1","name":"One","identifier":"ONE","created_at":"2026-01-01T00:00:00Z"}],"next_cursor":null,"next_page_results":false}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let projects = client.list_projects().await.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].identifier.as_deref(), Some("ONE"));
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn error_400_renders_field_detail() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/users/me/")
+            .with_status(400)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"name":["This field is required."]}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let err = client.get_me().await.unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("HTTP 400"), "{msg}");
+        assert!(msg.contains("name: This field is required."), "{msg}");
+        assert_eq!(err.exit_code(), planebotcli_core::errors::EXIT_API);
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn error_404_maps_to_not_found_exit3() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/projects/p1/work-items/wi1")
+            .match_query(mockito::Matcher::Any)
+            .with_status(404)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let err = client.get_work_item("p1", "wi1").await.unwrap_err();
+        assert_eq!(err.exit_code(), planebotcli_core::errors::EXIT_NOT_FOUND);
+        m.assert_async().await;
+    }
+}

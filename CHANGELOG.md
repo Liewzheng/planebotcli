@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-09
+
+### Added
+- `--desc-md` on `wi create` / `wi update` and `--body-md` on `comment create` / `comment update`: native markdown-subset input (headings, unordered/ordered lists, inline and fenced code, bold/italic, auto-linked bare URLs) converted to HTML client-side, so no external markdown-to-HTML step is needed. `--desc-md` is mutually exclusive with `-d`/`--description`; `--body-md` with `--body`
+- A `web_url` field on work item output — a browsable link (`{base}/{workspace}/projects/{project-uuid}/issues/{issue-uuid}/`) built from config, present in the JSON of `wi ls` / `wi show` / `wi create` / `wi update` / `wi search`, and shown as a `Web URL` row in `wi show`
+
+### Fixed
+- `wi create` / `wi update` now validate `--state` and `--labels` against the project before writing: an unknown name fails with exit code 5 and a message that lists the available states/labels (e.g. `State 'In Review' not found in project SIRENA. Available: Backlog, Todo, ...`), instead of a bare not-found error. Fuzzy matching is preserved and resolution stays authoritative
+- API error messages now include the HTTP status code and field-level errors parsed from the response body (e.g. `description: This field is required.`); they degrade gracefully when the SDK exposes no detail, and never include credentials
+
 ## [0.6.0] - 2026-09-09
 
 ### Added

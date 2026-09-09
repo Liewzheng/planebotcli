@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.3] - 2026-09-09
+
+### Added
+- `doc archive` — archive (trash) a page without deleting it: sets
+  `archived_at` = today, verifies the archive landed, and leaves the page
+  recoverable in the web UI trash. (`doc delete` still archives then deletes.)
+
 ## [1.0.2] - 2026-09-09
 
 ### Added

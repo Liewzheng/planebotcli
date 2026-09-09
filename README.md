@@ -332,6 +332,27 @@ api_key=your-personal-access-token
 workspace=your-workspace-slug
 ```
 
+The file is plain `key=value` text — one entry per line, keys are lowercase (`base_url`, `api_key`, `workspace`), blank lines and `#` comments are ignored. `planecli configure` writes it with restricted permissions (`chmod 600`), and you should keep it that way since it holds your Personal Access Token.
+
+Precedence: **CLI flags > environment variables (`PLANE_BASE_URL`, `PLANE_API_KEY`, `PLANE_WORKSPACE`) > `~/.plane_api`**. Values from a higher source override the file per setting.
+
+Because the file is `key=value` text, it can also be sourced directly in a shell for raw `curl` access to the API:
+
+```bash
+source ~/.plane_api
+
+curl -H "X-Api-Key: $api_key" "$base_url/v1/workspaces/$workspace/projects/"
+```
+
+Or export the uppercase names planecli expects:
+
+```bash
+source ~/.plane_api
+export PLANE_BASE_URL="$base_url" PLANE_API_KEY="$api_key" PLANE_WORKSPACE="$workspace"
+```
+
+The source of truth for the file format and the key-to-env-var mapping is `src/planecli/config.py` (`_FIELD_MAP`).
+
 ## Output Formats
 
 By default, PlaneCLI renders results as colored Rich tables on stderr. Add `--json` to any command to get structured JSON on stdout:

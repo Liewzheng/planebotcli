@@ -337,3 +337,41 @@ pub struct IntakeIssueWrite {
     pub description_html: Option<String>,
     pub priority: Option<String>,
 }
+
+/// A page (document) as returned by the pages endpoints.
+///
+/// Pages live in two scopes: workspace pages and per-project pages. Workspace
+/// pages carry `project: null`; both scopes expose `created_by` and, once
+/// archived, `archived_at` (the API refuses to DELETE a page that has not been
+/// archived — see ADR-0007).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Page {
+    pub id: String,
+    pub name: Option<String>,
+    #[serde(rename = "description_html")]
+    pub description_html: Option<String>,
+    #[serde(rename = "description_stripped")]
+    pub description_stripped: Option<String>,
+    #[serde(rename = "created_at")]
+    pub created_at: Option<String>,
+    #[serde(rename = "updated_at")]
+    pub updated_at: Option<String>,
+    #[serde(rename = "created_by")]
+    pub created_by: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub workspace: Option<String>,
+    #[serde(rename = "archived_at")]
+    pub archived_at: Option<String>,
+}
+
+/// Request body for page create/update. `description_html` is required on
+/// create (send an empty `<p></p>` when there is no content); `None` fields
+/// are dropped from the serialized body so a PATCH only carries what changed.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct PageWrite {
+    pub name: Option<String>,
+    #[serde(rename = "description_html")]
+    pub description_html: Option<String>,
+}

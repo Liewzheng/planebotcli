@@ -9,7 +9,8 @@ use planebotcli_cache::Cache;
 use planebotcli_core::{Config, PlaneError};
 use planebotcli_types::{
     Comment, CommentWrite, Cycle, CycleWrite, IntakeItem, IntakeWrite, Label, LabelWrite, Member,
-    Module, ModuleWrite, Project, ProjectWrite, State, StateWrite, User, WorkItem, WorkItemWrite,
+    Module, ModuleWrite, Page, PageWrite, Project, ProjectWrite, State, StateWrite, User, WorkItem,
+    WorkItemWrite,
 };
 use serde::de::DeserializeOwned;
 use std::time::Duration;
@@ -23,6 +24,38 @@ const TTL_WORK_ITEMS: Duration = Duration::from_secs(60);
 const TTL_INTAKE: Duration = Duration::from_secs(60);
 const TTL_MODULES: Duration = Duration::from_secs(300);
 const TTL_CYCLES: Duration = Duration::from_secs(300);
+const TTL_PAGES: Duration = Duration::from_secs(120);
+
+/// The two places pages (documents) live: directly under the workspace, or
+/// under one of its projects.
+pub enum PageScope {
+    /// `/api/v1/workspaces/{ws}/pages/`
+    Workspace,
+    /// `/api/v1/workspaces/{ws}/projects/{pid}/pages/`
+    Project(String),
+}
+
+impl PageScope {
+    /// URL path prefix (ends with `/`) for this scope under the workspace.
+    fn base_path(&self, workspace: &str) -> String {
+        match self {
+            Self::Workspace => format!("/api/v1/workspaces/{workspace}/pages/"),
+            Self::Project(pid) => {
+                format!("/api/v1/workspaces/{workspace}/projects/{pid}/pages/")
+            }
+        }
+    }
+
+    /// Cache key prefix for this scope. The workspace prefix doubles as the
+    /// prefix for every project scope, so invalidating it clears both the
+    /// workspace page list and all project page lists of the workspace.
+    fn cache_prefix(&self, workspace: &str) -> String {
+        match self {
+            Self::Workspace => format!("pages:{workspace}"),
+            Self::Project(pid) => format!("pages:{workspace}:{pid}"),
+        }
+    }
+}
 
 pub struct PlaneClient {
     http: reqwest::Client,
@@ -143,7 +176,7 @@ impl PlaneClient {
             if let Some(c) = &cursor {
                 query.push(("cursor", c.clone()));
             }
-            let page: Page<T> = self
+            let page: PageEnvelope<T> = self
                 .request_json(reqwest::Method::GET, path, &query, None)
                 .await?;
             let had_more = page.next_page_results;
@@ -727,6 +760,92 @@ impl PlaneClient {
         self.paginate(&path).await
     }
 
+    /// `GET .../pages/` — all pages of a scope, following pagination (cached).
+    pub async fn list_pages(&self, scope: &PageScope) -> Result<Vec<Page>, PlaneError> {
+        let key = scope.cache_prefix(&self.workspace);
+        let path = scope.base_path(&self.workspace);
+        self.cached_list(&key, TTL_PAGES, async move { self.paginate(&path).await })
+            .await
+    }
+
+    /// Workspace-scoped convenience for [`Self::list_pages`].
+    pub async fn list_workspace_pages(&self) -> Result<Vec<Page>, PlaneError> {
+        self.list_pages(&PageScope::Workspace).await
+    }
+
+    /// Project-scoped convenience for [`Self::list_pages`].
+    pub async fn list_project_pages(&self, project_id: &str) -> Result<Vec<Page>, PlaneError> {
+        self.list_pages(&PageScope::Project(project_id.to_string()))
+            .await
+    }
+
+    /// `GET .../pages/{id}/` — a single page in the given scope.
+    pub async fn get_page(&self, scope: &PageScope, page_id: &str) -> Result<Page, PlaneError> {
+        let path = format!("{}{}/", scope.base_path(&self.workspace), page_id);
+        self.request_json(reqwest::Method::GET, &path, &[], None)
+            .await
+    }
+
+    /// `POST .../pages/` — create a page in the given scope.
+    pub async fn create_page(
+        &self,
+        scope: &PageScope,
+        body: &PageWrite,
+    ) -> Result<Page, PlaneError> {
+        let path = scope.base_path(&self.workspace);
+        let result = self
+            .request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&scope.cache_prefix(&self.workspace));
+        result
+    }
+
+    /// `PATCH .../pages/{id}/` — update a page in the given scope.
+    pub async fn update_page(
+        &self,
+        scope: &PageScope,
+        page_id: &str,
+        body: &PageWrite,
+    ) -> Result<Page, PlaneError> {
+        let path = format!("{}{}/", scope.base_path(&self.workspace), page_id);
+        let result = self
+            .request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&scope.cache_prefix(&self.workspace));
+        result
+    }
+
+    /// `PATCH .../pages/{id}/` with `{"archived_at": date}` — archive a page.
+    ///
+    /// The API rejects DELETE on a page that has not been archived, and a bare
+    /// `is_archived` flag is silently ignored (ADR-0007), so deletion goes
+    /// through this archive step first. Returns the raw parsed response so the
+    /// caller can verify the archive actually landed before deleting.
+    pub async fn archive_page(
+        &self,
+        scope: &PageScope,
+        page_id: &str,
+        date: &str,
+    ) -> Result<serde_json::Value, PlaneError> {
+        let path = format!("{}{}/", scope.base_path(&self.workspace), page_id);
+        let body = serde_json::json!({ "archived_at": date });
+        let result = self
+            .request_json(reqwest::Method::PATCH, &path, &[], Some(&body))
+            .await;
+        self.invalidate(&scope.cache_prefix(&self.workspace));
+        result
+    }
+
+    /// `DELETE .../pages/{id}/` — permanently delete an archived page.
+    pub async fn delete_page(&self, scope: &PageScope, page_id: &str) -> Result<(), PlaneError> {
+        let path = format!("{}{}/", scope.base_path(&self.workspace), page_id);
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::DELETE, &path, &[], None)
+            .await?;
+        self.invalidate(&scope.cache_prefix(&self.workspace));
+        Ok(())
+    }
+
     /// `GET .../projects/{pid}/intake-issues/` — all pages (cached).
     ///
     /// The API returns an empty list whenever the project's intake view is
@@ -838,7 +957,7 @@ fn strip_nulls(value: serde_json::Value) -> serde_json::Value {
 
 /// Cursor-paginated envelope used by list endpoints.
 #[derive(Debug, serde::Deserialize)]
-struct Page<T> {
+struct PageEnvelope<T> {
     results: Vec<T>,
     next_cursor: Option<String>,
     #[serde(default)]

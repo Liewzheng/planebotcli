@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use planebotcli_cache::Cache;
-use planebotcli_client::PlaneClient;
+use planebotcli_client::{PageScope, PlaneClient};
 use planebotcli_core::{PlaneError, load_config};
 use planebotcli_format::{output_json, output_table};
 use planebotcli_resolve::{
@@ -15,7 +15,8 @@ use planebotcli_resolve::{
 };
 use planebotcli_types::{
     CommentWrite, Cycle, CycleWrite, IntakeIssueWrite, IntakeItem, IntakeWrite, Label, LabelWrite,
-    Module, ModuleWrite, Project, ProjectWrite, State, StateWrite, WorkItem, WorkItemWrite,
+    Module, ModuleWrite, Page, PageWrite, Project, ProjectWrite, State, StateWrite, WorkItem,
+    WorkItemWrite,
 };
 use render::{Lookups, comment_json, intake_status_label, intake_view, work_item_view};
 use serde_json::{Value, json};
@@ -87,6 +88,19 @@ pub enum Command {
     Intake {
         #[command(subcommand)]
         command: IntakeCmd,
+    },
+    /// Manage documents (pages).
+    ///
+    /// Without -p/--project, commands operate on workspace pages; with -p they
+    /// operate on the project's pages.
+    #[command(
+        visible_alias = "docs",
+        visible_alias = "document",
+        visible_alias = "documents"
+    )]
+    Doc {
+        #[command(subcommand)]
+        command: DocCmd,
     },
     /// Workspace members.
     User {
@@ -535,6 +549,65 @@ pub enum IntakeCmd {
     Enabled {
         /// Project name, identifier, or UUID.
         project: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DocCmd {
+    /// List documents (workspace pages, or project pages with -p).
+    #[command(alias = "ls")]
+    List {
+        /// Project name, identifier, or UUID. If omitted, lists workspace pages.
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Show document details.
+    #[command(alias = "read")]
+    Show {
+        /// Page name or UUID.
+        doc: String,
+        /// Project name, identifier, or UUID. If omitted, looks up a workspace page.
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Create a new document.
+    #[command(alias = "new")]
+    Create {
+        /// Document title.
+        #[arg(long)]
+        title: String,
+        /// Document content (plain text, converted to HTML).
+        #[arg(long, short = 'c')]
+        content: Option<String>,
+        /// Project name, identifier, or UUID. If omitted, creates a workspace page.
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Update a document.
+    Update {
+        /// Page name or UUID.
+        doc: String,
+        /// New document title.
+        #[arg(long)]
+        title: Option<String>,
+        /// New content (plain text, converted to HTML).
+        #[arg(long, short = 'c')]
+        content: Option<String>,
+        /// Project name, identifier, or UUID. If omitted, operates on a workspace page.
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Delete a document.
+    ///
+    /// Pages must be archived before the API accepts a DELETE, so this first
+    /// archives the page (archived_at = today) and verifies the archive
+    /// landed, then deletes it.
+    Delete {
+        /// Page name or UUID.
+        doc: String,
+        /// Project name, identifier, or UUID. If omitted, operates on a workspace page.
+        #[arg(long, short = 'p')]
+        project: Option<String>,
     },
 }
 
@@ -1093,6 +1166,45 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
         },
         Command::User { command } => match command {
             UserCmd::List => cmd_user_list(&client, cli.json).await,
+        },
+        Command::Doc { command } => match command {
+            DocCmd::List { project } => cmd_doc_list(&client, project.as_deref(), cli.json).await,
+            DocCmd::Show { doc, project } => {
+                cmd_doc_show(&client, &doc, project.as_deref(), cli.json).await
+            }
+            DocCmd::Create {
+                title,
+                content,
+                project,
+            } => {
+                cmd_doc_create(
+                    &client,
+                    &title,
+                    content.as_deref(),
+                    project.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            DocCmd::Update {
+                doc,
+                title,
+                content,
+                project,
+            } => {
+                cmd_doc_update(
+                    &client,
+                    &doc,
+                    title.as_deref(),
+                    content.as_deref(),
+                    project.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            DocCmd::Delete { doc, project } => {
+                cmd_doc_delete(&client, &doc, project.as_deref()).await
+            }
         },
         Command::Cache { command } => match command {
             CacheCmd::Clear => {
@@ -2547,6 +2659,226 @@ async fn cmd_state_delete(
     Ok(())
 }
 
+/// The pages scope a `doc` command targets: the project's pages when `-p` is
+/// given, the workspace's pages otherwise (mirrors the Python commands, where
+/// every scope decision is `project → project pages, else workspace pages`).
+async fn page_scope(client: &PlaneClient, project: Option<&str>) -> Result<PageScope, PlaneError> {
+    match project {
+        Some(p) => {
+            let proj = resolve_project(p, client).await?;
+            Ok(PageScope::Project(proj.id))
+        }
+        None => Ok(PageScope::Workspace),
+    }
+}
+
+/// Resolve a page reference by UUID (direct fetch) or fuzzy name (against the
+/// scope's page list), like the other resource resolvers.
+async fn resolve_page(
+    client: &PlaneClient,
+    scope: &PageScope,
+    query: &str,
+) -> Result<Page, PlaneError> {
+    if planebotcli_resolve::is_uuid(query) {
+        return client.get_page(scope, query).await;
+    }
+    let pages = client.list_pages(scope).await?;
+    let found =
+        planebotcli_resolve::find_best_match(query, &pages, |p| p.name.as_deref().unwrap_or(""));
+    match found {
+        Some(m) => Ok(m.item.clone()),
+        None => Err(PlaneError::NotFound {
+            message: format!("Page not found: {query}"),
+        }),
+    }
+}
+
+/// Text of a page's body with HTML tags stripped, mirroring the Python
+/// `_enrich_doc` `content_text` derivation.
+fn page_content_text(page: &Page) -> String {
+    page.description_html
+        .as_deref()
+        .map(planebotcli_html::strip_html_tags)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Serialize a page to JSON with the computed `content_text` field added, the
+/// same shape the Python CLI outputs for `--json`.
+fn page_json(page: &Page) -> Value {
+    let value = serde_json::to_value(page).unwrap_or(Value::Null);
+    let Value::Object(mut map) = value else {
+        return Value::Null;
+    };
+    map.insert(
+        "content_text".to_string(),
+        Value::String(page_content_text(page)),
+    );
+    Value::Object(map)
+}
+
+/// Print a single page: JSON to stdout, or a Field/Value table to stderr.
+fn output_page_view(page: &Page, json: bool) {
+    if json {
+        output_json(&page_json(page));
+        return;
+    }
+    let rows = vec![
+        vec!["id".to_string(), page.id.clone()],
+        vec!["name".to_string(), page.name.clone().unwrap_or_default()],
+        vec!["content_text".to_string(), page_content_text(page)],
+        vec![
+            "created_at".to_string(),
+            fmt_ts(page.created_at.as_deref().unwrap_or("")),
+        ],
+        vec![
+            "updated_at".to_string(),
+            fmt_ts(page.updated_at.as_deref().unwrap_or("")),
+        ],
+    ];
+    output_table(&["Field", "Value"], &rows);
+}
+
+async fn cmd_doc_list(
+    client: &PlaneClient,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let scope = page_scope(client, project).await?;
+    let pages = client.list_pages(&scope).await?;
+    if json {
+        let views: Vec<Value> = pages.iter().map(page_json).collect();
+        output_json(&views);
+    } else {
+        let rows: Vec<Vec<String>> = pages
+            .iter()
+            .map(|p| {
+                vec![
+                    p.id.clone(),
+                    p.name.clone().unwrap_or_default(),
+                    fmt_ts(p.created_at.as_deref().unwrap_or("")),
+                    fmt_ts(p.updated_at.as_deref().unwrap_or("")),
+                ]
+            })
+            .collect();
+        output_table(&["ID", "Title", "Created", "Updated"], &rows);
+    }
+    Ok(())
+}
+
+async fn cmd_doc_show(
+    client: &PlaneClient,
+    doc: &str,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let scope = page_scope(client, project).await?;
+    let page = resolve_page(client, &scope, doc).await?;
+    output_page_view(&page, json);
+    Ok(())
+}
+
+async fn cmd_doc_create(
+    client: &PlaneClient,
+    title: &str,
+    content: Option<&str>,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let scope = page_scope(client, project).await?;
+    // description_html is mandatory on the API: an empty body is sent as an
+    // empty paragraph (the SDK field has no default, so omitting it fails).
+    let write = PageWrite {
+        name: Some(title.to_string()),
+        description_html: Some(match content {
+            Some(c) => planebotcli_html::body_to_html(c),
+            None => "<p></p>".to_string(),
+        }),
+    };
+    let created = client.create_page(&scope, &write).await?;
+    output_page_view(&created, json);
+    Ok(())
+}
+
+async fn cmd_doc_update(
+    client: &PlaneClient,
+    doc: &str,
+    title: Option<&str>,
+    content: Option<&str>,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let scope = page_scope(client, project).await?;
+    let found = resolve_page(client, &scope, doc).await?;
+    let mut write = PageWrite::default();
+    // Title uses truthiness like the Python `if title:`, so `--title ""` is
+    // skipped; content is guarded by is-not-None so an explicit empty string
+    // still reaches the API as an empty description.
+    if let Some(t) = title.filter(|t| !t.is_empty()) {
+        write.name = Some(t.to_string());
+    }
+    if let Some(c) = content {
+        write.description_html = Some(planebotcli_html::body_to_html(c));
+    }
+    let updated = client.update_page(&scope, &found.id, &write).await?;
+    output_page_view(&updated, json);
+    Ok(())
+}
+
+/// Delete (trash) a page: archive it first, then DELETE it.
+///
+/// The API only deletes pages that are already archived and rejects DELETE on
+/// an unarchived page with a 400; a bare `is_archived` flag is silently
+/// ignored (ADR-0007). So this archives with `archived_at` = today, verifies
+/// the response actually carries the date, and only then deletes.
+async fn cmd_doc_delete(
+    client: &PlaneClient,
+    doc: &str,
+    project: Option<&str>,
+) -> Result<(), PlaneError> {
+    let scope = page_scope(client, project).await?;
+    let found = resolve_page(client, &scope, doc).await?;
+    let name = found.name.clone().unwrap_or_else(|| found.id.clone());
+    let today = today_ymd();
+    let raw = client.archive_page(&scope, &found.id, &today).await?;
+    if raw.get("archived_at").and_then(Value::as_str) != Some(today.as_str()) {
+        return Err(PlaneError::Api {
+            message: "the document was not archived, so it was not deleted. \
+                      Archiving may require a higher project role."
+                .into(),
+        });
+    }
+    client.delete_page(&scope, &found.id).await?;
+    eprintln!("Document '{name}' deleted.");
+    Ok(())
+}
+
+/// Today's date as `YYYY-MM-DD`, computed from the system clock (UTC).
+fn today_ymd() -> String {
+    let days = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86_400)
+        .unwrap_or(0) as i64;
+    let (y, m, d) = civil_from_days(days);
+    format!("{y:04}-{m:02}-{d:02}")
+}
+
+/// Convert days since 1970-01-01 to a (year, month, day) civil date (Howard
+/// Hinnant's `civil_from_days` algorithm), so the archive date needs no
+/// external date library.
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
 /// Options for `module create` (grouped to keep the handler signature small).
 struct ModuleCreateOpts<'a> {
     project: Option<&'a str>,
@@ -3372,5 +3704,43 @@ mod tests {
         let view = intake_view(&item);
         assert_eq!(view["issue_id"], "issue-9");
         assert_eq!(view["status"], "");
+    }
+
+    #[test]
+    fn civil_from_days_known_dates() {
+        assert_eq!(civil_from_days(0), (1970, 1, 1));
+        assert_eq!(civil_from_days(10_957), (2000, 1, 1));
+        assert_eq!(civil_from_days(11_016), (2000, 2, 29));
+        assert_eq!(civil_from_days(19_782), (2024, 2, 29));
+        assert_eq!(civil_from_days(20_705), (2026, 9, 9));
+        assert_eq!(civil_from_days(20_818), (2026, 12, 31));
+        // The rendered archive date is a YYYY-MM-DD string.
+        assert_eq!(today_ymd().len(), 10);
+    }
+
+    #[test]
+    fn page_json_adds_stripped_content_text() {
+        let page = Page {
+            id: "page-1".into(),
+            name: Some("Notes".into()),
+            description_html: Some("<p>hello<br/>world</p>".into()),
+            ..Default::default()
+        };
+        let view = page_json(&page);
+        assert_eq!(view["content_text"], "helloworld");
+        assert_eq!(view["name"], "Notes");
+        assert_eq!(view["id"], "page-1");
+    }
+
+    #[test]
+    fn page_json_empty_description_is_empty_string() {
+        let page = Page {
+            id: "page-2".into(),
+            name: None,
+            description_html: None,
+            ..Default::default()
+        };
+        let view = page_json(&page);
+        assert_eq!(view["content_text"], "");
     }
 }

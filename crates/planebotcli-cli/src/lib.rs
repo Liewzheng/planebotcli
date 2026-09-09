@@ -3482,6 +3482,9 @@ async fn cmd_doc_create(
     Ok(())
 }
 
+// A content trio (plain/md/html) plus issue/title/project is inherent to the
+// command; grouping further would obscure the clap surface.
+#[allow(clippy::too_many_arguments)]
 async fn cmd_doc_update(
     client: &PlaneClient,
     doc: &str,

@@ -641,6 +641,14 @@ pub enum DocCmd {
         /// Document content (plain text, converted to HTML).
         #[arg(long, short = 'c')]
         content: Option<String>,
+        /// Content written in native markdown (headings, lists, code, bold/italic,
+        /// links) — converted to HTML. Mutually exclusive with --content.
+        #[arg(long)]
+        content_md: Option<String>,
+        /// Content as raw HTML, stored verbatim (rich layout). Mutually
+        /// exclusive with --content and --content-md.
+        #[arg(long)]
+        content_html: Option<String>,
         /// Project name, identifier, or UUID. If omitted, creates a workspace page.
         #[arg(long, short = 'p')]
         project: Option<String>,
@@ -655,6 +663,14 @@ pub enum DocCmd {
         /// New content (plain text, converted to HTML).
         #[arg(long, short = 'c')]
         content: Option<String>,
+        /// New content in native markdown — converted to HTML. Mutually
+        /// exclusive with --content.
+        #[arg(long)]
+        content_md: Option<String>,
+        /// New content as raw HTML, stored verbatim. Mutually exclusive with
+        /// --content and --content-md.
+        #[arg(long)]
+        content_html: Option<String>,
         /// Project name, identifier, or UUID. If omitted, operates on a workspace page.
         #[arg(long, short = 'p')]
         project: Option<String>,
@@ -1335,12 +1351,16 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
             DocCmd::Create {
                 title,
                 content,
+                content_md,
+                content_html,
                 project,
             } => {
                 cmd_doc_create(
                     &client,
                     &title,
                     content.as_deref(),
+                    content_md.as_deref(),
+                    content_html.as_deref(),
                     project.as_deref(),
                     cli.json,
                 )
@@ -1350,6 +1370,8 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 doc,
                 title,
                 content,
+                content_md,
+                content_html,
                 project,
             } => {
                 cmd_doc_update(
@@ -1357,6 +1379,8 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     &doc,
                     title.as_deref(),
                     content.as_deref(),
+                    content_md.as_deref(),
+                    content_html.as_deref(),
                     project.as_deref(),
                     cli.json,
                 )
@@ -3404,22 +3428,54 @@ async fn cmd_doc_show(
     Ok(())
 }
 
+/// Build a page description_html from the mutually exclusive content flags:
+/// `--content-html` verbatim, `--content-md` via md_to_html, `--content` plain
+/// text via body_to_html; an empty body becomes an empty paragraph (the API
+/// field is mandatory).
+fn doc_description(
+    content: Option<&str>,
+    content_md: Option<&str>,
+    content_html: Option<&str>,
+) -> Result<String, PlaneError> {
+    let given = [
+        content.is_some(),
+        content_md.is_some(),
+        content_html.is_some(),
+    ]
+    .into_iter()
+    .filter(|b| *b)
+    .count();
+    if given > 1 {
+        return Err(PlaneError::Validation {
+            message: "--content, --content-md and --content-html are mutually exclusive.".into(),
+            hint: Some("Pass the page content via only one of them.".into()),
+        });
+    }
+    if let Some(h) = content_html {
+        return Ok(h.to_string());
+    }
+    if let Some(m) = content_md {
+        return Ok(planebotcli_html::md_to_html(m));
+    }
+    if let Some(c) = content {
+        return Ok(planebotcli_html::body_to_html(c));
+    }
+    Ok("<p></p>".to_string())
+}
+
 async fn cmd_doc_create(
     client: &PlaneClient,
     title: &str,
     content: Option<&str>,
+    content_md: Option<&str>,
+    content_html: Option<&str>,
     project: Option<&str>,
     json: bool,
 ) -> Result<(), PlaneError> {
     let scope = page_scope(client, project).await?;
-    // description_html is mandatory on the API: an empty body is sent as an
-    // empty paragraph (the SDK field has no default, so omitting it fails).
     let write = PageWrite {
         name: Some(title.to_string()),
-        description_html: Some(match content {
-            Some(c) => planebotcli_html::body_to_html(c),
-            None => "<p></p>".to_string(),
-        }),
+        description_html: Some(doc_description(content, content_md, content_html)?),
     };
     let created = client.create_page(&scope, &write).await?;
     output_page_view(&created, json);
@@ -3431,6 +3487,8 @@ async fn cmd_doc_update(
     doc: &str,
     title: Option<&str>,
     content: Option<&str>,
+    content_md: Option<&str>,
+    content_html: Option<&str>,
     project: Option<&str>,
     json: bool,
 ) -> Result<(), PlaneError> {
@@ -3438,13 +3496,12 @@ async fn cmd_doc_update(
     let found = resolve_page(client, &scope, doc).await?;
     let mut write = PageWrite::default();
     // Title uses truthiness like the Python `if title:`, so `--title ""` is
-    // skipped; content is guarded by is-not-None so an explicit empty string
-    // still reaches the API as an empty description.
+    // skipped.
     if let Some(t) = title.filter(|t| !t.is_empty()) {
         write.name = Some(t.to_string());
     }
-    if let Some(c) = content {
-        write.description_html = Some(planebotcli_html::body_to_html(c));
+    if content.is_some() || content_md.is_some() || content_html.is_some() {
+        write.description_html = Some(doc_description(content, content_md, content_html)?);
     }
     let updated = client.update_page(&scope, &found.id, &write).await?;
     output_page_view(&updated, json);

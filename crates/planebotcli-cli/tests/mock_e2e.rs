@@ -29,7 +29,8 @@ fn stdout_of(out: &std::process::Output) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
-const USER: &str = r#"{"id":"u1","display_name":"Bot","first_name":"B","last_name":"","email":"b@x"}"#;
+const USER: &str =
+    r#"{"id":"u1","display_name":"Bot","first_name":"B","last_name":"","email":"b@x"}"#;
 const MEMBERS: &str =
     r#"[{"id":"u1","display_name":"Bot","first_name":"B","last_name":"","email":"b@x"}]"#;
 const PROJECTS: &str = r#"{"results":[{"id":"p1","name":"Demo","identifier":"DEMO","created_at":"2026-01-01T00:00:00Z"}],"next_cursor":null,"next_page_results":false}"#;
@@ -68,8 +69,15 @@ fn wi_ls_json_contract() {
             .create();
     }
 
-    let out = run(&["wi", "ls", "-p", "Demo", "--json", "--no-cache"], &server.url());
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    let out = run(
+        &["wi", "ls", "-p", "Demo", "--json", "--no-cache"],
+        &server.url(),
+    );
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let parsed: serde_json::Value = serde_json::from_str(&stdout_of(&out)).expect("valid JSON");
     let row = &parsed[0];
     assert_eq!(row["sequence_id"], "DEMO-1");
@@ -77,7 +85,12 @@ fn wi_ls_json_contract() {
     assert_eq!(row["state_detail_name"], "Todo");
     assert_eq!(row["label_names"], "feat");
     assert_eq!(row["assignee_names"], "B"); // member full_name = first+last
-    assert!(row["web_url"].as_str().unwrap_or("").contains("/ws/projects/p1/issues/wi1/"));
+    assert!(
+        row["web_url"]
+            .as_str()
+            .unwrap_or("")
+            .contains("/ws/projects/p1/issues/wi1/")
+    );
 }
 
 #[test]
@@ -120,7 +133,17 @@ fn invalid_state_exits_5_with_available_list() {
         .create();
 
     let out = run(
-        &["wi", "create", "x", "-p", "Demo", "--state", "NoSuch", "--json", "--no-cache"],
+        &[
+            "wi",
+            "create",
+            "x",
+            "-p",
+            "Demo",
+            "--state",
+            "NoSuch",
+            "--json",
+            "--no-cache",
+        ],
         &server.url(),
     );
     assert_eq!(out.status.code(), Some(5));

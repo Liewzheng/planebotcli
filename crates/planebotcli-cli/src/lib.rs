@@ -441,6 +441,12 @@ pub enum ModuleCmd {
         /// New status: backlog, planned, in-progress, paused, completed, cancelled.
         #[arg(long)]
         status: Option<String>,
+        /// New start date (YYYY-MM-DD).
+        #[arg(long)]
+        start_date: Option<String>,
+        /// New end date (YYYY-MM-DD).
+        #[arg(long)]
+        end_date: Option<String>,
     },
     /// Delete a module.
     Delete {
@@ -1216,12 +1222,16 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 name,
                 description,
                 status,
+                start_date,
+                end_date,
             } => {
                 let opts = ModuleUpdateOpts {
                     project: project.as_deref(),
                     name: name.as_deref(),
                     description: description.as_deref(),
                     status: status.as_deref(),
+                    start_date: start_date.as_deref(),
+                    end_date: end_date.as_deref(),
                 };
                 cmd_module_update(&client, &module, &opts, cli.json).await
             }
@@ -3510,6 +3520,8 @@ struct ModuleUpdateOpts<'a> {
     name: Option<&'a str>,
     description: Option<&'a str>,
     status: Option<&'a str>,
+    start_date: Option<&'a str>,
+    end_date: Option<&'a str>,
 }
 
 /// Options for `cycle create`.
@@ -3792,6 +3804,8 @@ async fn cmd_module_update(
     let status = normalize_module_status(opts.status)?;
     let proj = require_project(client, opts.project).await?;
     let found = resolve_module(client, &proj.id, module).await?;
+    let start_date = validate_date(opts.start_date, "--start-date")?;
+    let end_date = validate_date(opts.end_date, "--end-date")?;
     let mut write = ModuleWrite::default();
     if let Some(name) = opts.name {
         write.name = Some(name.to_string());
@@ -3801,6 +3815,12 @@ async fn cmd_module_update(
     }
     if let Some(s) = status {
         write.status = Some(s);
+    }
+    if let Some(d) = start_date {
+        write.start_date = Some(d);
+    }
+    if let Some(d) = end_date {
+        write.target_date = Some(d);
     }
     let updated = client.update_module(&proj.id, &found.id, &write).await?;
     output_module_view(&updated, json);

@@ -1081,7 +1081,10 @@ class TestWiUpdate:
     @patch("planecli.commands.work_items.resolve_estimate_point_async", new_callable=AsyncMock)
     @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
     @patch("planecli.commands.work_items.get_client")
-    @patch("planecli.commands.work_items.resolve_work_item_across_projects_async", new_callable=AsyncMock)
+    @patch(
+        "planecli.commands.work_items.resolve_work_item_across_projects_async",
+        new_callable=AsyncMock,
+    )
     @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
     async def test_update_with_estimate(
         self,
@@ -1119,7 +1122,10 @@ class TestWiUpdate:
     @patch("planecli.commands.work_items.run_sdk", new_callable=AsyncMock)
     @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
     @patch("planecli.commands.work_items.get_client")
-    @patch("planecli.commands.work_items.resolve_work_item_across_projects_async", new_callable=AsyncMock)
+    @patch(
+        "planecli.commands.work_items.resolve_work_item_across_projects_async",
+        new_callable=AsyncMock,
+    )
     @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
     async def test_update_without_estimate(
         self,
@@ -1504,3 +1510,264 @@ class TestValidateDate:
 
         with pytest.raises(ValidationError):
             _validate_date(bad, "--start-date")
+class TestWiCreateValidateStateLabels:
+    """Write-before validation of --state/--labels in wi create (PLANECLI-14)."""
+
+    STATES = [
+        _make_state_dict("st-1", "Backlog"),
+        _make_state_dict("st-2", "Todo"),
+        _make_state_dict("st-3", "In Progress"),
+        _make_state_dict("st-4", "Done"),
+        _make_state_dict("st-5", "Cancelled"),
+    ]
+
+    @patch("planecli.commands.work_items.output_single")
+    @patch("planecli.commands.work_items.run_sdk", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.resolve_label_async", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.resolve_state_async", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_client")
+    @patch("planecli.commands.work_items._resolve_project_id_async", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_projects", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_states", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_labels", new_callable=AsyncMock)
+    @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
+    async def test_create_missing_state_raises_with_available(
+        self,
+        mock_invalidate,
+        mock_cached_labels,
+        mock_cached_states,
+        mock_cached_projects,
+        mock_resolve_proj,
+        mock_get_client,
+        mock_get_ws,
+        mock_resolve_state,
+        mock_resolve_label,
+        mock_run_sdk,
+        mock_output,
+    ):
+        """Unknown --state must fail before any write, naming what exists."""
+        from planecli.exceptions import ValidationError
+
+        mock_get_client.return_value = MagicMock()
+        mock_resolve_proj.return_value = "proj-1"
+        mock_cached_projects.return_value = [_make_project_dict("proj-1", "SIRENA", "Sirena")]
+        mock_cached_states.return_value = self.STATES
+        mock_cached_labels.return_value = []
+
+        with pytest.raises(ValidationError) as exc_info:
+            await create("Task", project="Sirena", state="In Review")
+
+        message = str(exc_info.value)
+        assert "State 'In Review' not found in project SIRENA" in message
+        assert "Available:" in message
+        for name in ("Backlog", "Todo", "In Progress", "Done", "Cancelled"):
+            assert name in message
+        # Pre-check: no resolution and no write may happen.
+        mock_resolve_state.assert_not_awaited()
+        mock_run_sdk.assert_not_awaited()
+        mock_output.assert_not_called()
+
+    @patch("planecli.commands.work_items.output_single")
+    @patch("planecli.commands.work_items.run_sdk", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.resolve_label_async", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.resolve_state_async", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_client")
+    @patch("planecli.commands.work_items._resolve_project_id_async", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_projects", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_states", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_labels", new_callable=AsyncMock)
+    @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
+    async def test_create_missing_label_raises_with_available(
+        self,
+        mock_invalidate,
+        mock_cached_labels,
+        mock_cached_states,
+        mock_cached_projects,
+        mock_resolve_proj,
+        mock_get_client,
+        mock_get_ws,
+        mock_resolve_state,
+        mock_resolve_label,
+        mock_run_sdk,
+        mock_output,
+    ):
+        """Unknown --labels entry must fail before any write, naming what exists."""
+        from planecli.exceptions import ValidationError
+
+        mock_get_client.return_value = MagicMock()
+        mock_resolve_proj.return_value = "proj-1"
+        mock_cached_projects.return_value = [_make_project_dict("proj-1", "SIRENA", "Sirena")]
+        mock_cached_states.return_value = self.STATES
+        mock_cached_labels.return_value = [
+            _make_label_dict("lb-1", "bug"),
+            _make_label_dict("lb-2", "feature"),
+        ]
+
+        with pytest.raises(ValidationError) as exc_info:
+            await create("Task", project="Sirena", labels="bug,nonexistent")
+
+        message = str(exc_info.value)
+        assert "Label 'nonexistent' not found in project SIRENA" in message
+        assert "Available:" in message
+        assert "bug" in message and "feature" in message
+        mock_resolve_label.assert_not_awaited()
+        mock_run_sdk.assert_not_awaited()
+        mock_output.assert_not_called()
+
+    @patch("planecli.commands.work_items.output_single")
+    @patch("planecli.commands.work_items.run_sdk", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.resolve_label_async", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.resolve_state_async", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_client")
+    @patch("planecli.commands.work_items._resolve_project_id_async", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_projects", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_states", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_labels", new_callable=AsyncMock)
+    @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
+    async def test_create_with_valid_state_and_labels_proceeds(
+        self,
+        mock_invalidate,
+        mock_cached_labels,
+        mock_cached_states,
+        mock_cached_projects,
+        mock_resolve_proj,
+        mock_get_client,
+        mock_get_ws,
+        mock_resolve_state,
+        mock_resolve_label,
+        mock_run_sdk,
+        mock_output,
+    ):
+        """Exact and fuzzy matches pass the pre-check and resolve to IDs."""
+        mock_get_client.return_value = MagicMock()
+        mock_resolve_proj.return_value = "proj-1"
+        mock_cached_projects.return_value = [_make_project_dict("proj-1", "SIRENA", "Sirena")]
+        mock_cached_states.return_value = self.STATES
+        mock_cached_labels.return_value = [
+            _make_label_dict("lb-1", "bug"),
+            _make_label_dict("lb-2", "frontend"),
+        ]
+        mock_resolve_state.return_value = {"id": "st-3"}
+        mock_resolve_label.side_effect = [{"id": "lb-1"}, {"id": "lb-2"}]
+
+        mock_item = MagicMock()
+        mock_item.model_dump.return_value = {
+            "id": "wi-1",
+            "name": "Task",
+            "sequence_id": 1,
+            "priority": "medium",
+        }
+        mock_run_sdk.return_value = mock_item
+
+        await create("Task", project="Sirena", state="in progress", labels="bug, frontend")
+
+        mock_resolve_state.assert_awaited_once()
+        assert mock_resolve_label.await_count == 2
+        create_data = mock_run_sdk.call_args[0][3]
+        assert create_data.state == "st-3"
+        assert create_data.labels == ["lb-1", "lb-2"]
+        mock_output.assert_called_once()
+
+
+class TestWiUpdateValidateStateLabels:
+    """Write-before validation of --state/--labels in wi update (PLANECLI-14)."""
+
+    @patch("planecli.commands.work_items.output_single")
+    @patch("planecli.commands.work_items.run_sdk", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.resolve_state_async", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_client")
+    @patch(
+        "planecli.commands.work_items.resolve_work_item_across_projects_async",
+        new_callable=AsyncMock,
+    )
+    @patch("planecli.cache.cached_list_projects", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_states", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_labels", new_callable=AsyncMock)
+    @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
+    async def test_update_missing_state_raises_with_available(
+        self,
+        mock_invalidate,
+        mock_cached_labels,
+        mock_cached_states,
+        mock_cached_projects,
+        mock_resolve_wi,
+        mock_get_client,
+        mock_get_ws,
+        mock_resolve_state,
+        mock_run_sdk,
+        mock_output,
+    ):
+        """Unknown --state on update fails before the write, naming what exists."""
+        from planecli.exceptions import ValidationError
+
+        mock_get_client.return_value = MagicMock()
+        mock_resolve_wi.return_value = ({"id": "wi-1", "name": "Test"}, "proj-1")
+        mock_cached_projects.return_value = [_make_project_dict("proj-1", "SIRENA", "Sirena")]
+        mock_cached_states.return_value = [
+            _make_state_dict("st-1", "Backlog"),
+            _make_state_dict("st-2", "Todo"),
+        ]
+        mock_cached_labels.return_value = []
+
+        with pytest.raises(ValidationError) as exc_info:
+            await update("SIRENA-1", state="In Review")
+
+        message = str(exc_info.value)
+        assert "State 'In Review' not found in project SIRENA" in message
+        assert "Available:" in message
+        assert "Backlog" in message and "Todo" in message
+        mock_resolve_state.assert_not_awaited()
+        mock_run_sdk.assert_not_awaited()
+        mock_output.assert_not_called()
+
+    @patch("planecli.commands.work_items.output_single")
+    @patch("planecli.commands.work_items.run_sdk", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.resolve_label_async", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_client")
+    @patch(
+        "planecli.commands.work_items.resolve_work_item_across_projects_async",
+        new_callable=AsyncMock,
+    )
+    @patch("planecli.cache.cached_list_projects", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_states", new_callable=AsyncMock)
+    @patch("planecli.cache.cached_list_labels", new_callable=AsyncMock)
+    @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
+    async def test_update_clear_labels_skips_validation(
+        self,
+        mock_invalidate,
+        mock_cached_labels,
+        mock_cached_states,
+        mock_cached_projects,
+        mock_resolve_wi,
+        mock_get_client,
+        mock_get_ws,
+        mock_resolve_label,
+        mock_run_sdk,
+        mock_output,
+    ):
+        """--clear-labels discards --labels, so nothing is validated or resolved."""
+        mock_get_client.return_value = MagicMock()
+        mock_resolve_wi.return_value = ({"id": "wi-1", "name": "Test"}, "proj-1")
+        mock_cached_projects.return_value = []
+        mock_cached_states.return_value = []
+        mock_cached_labels.return_value = []
+
+        mock_updated = MagicMock()
+        mock_updated.model_dump.return_value = {
+            "id": "wi-1",
+            "name": "Test",
+            "sequence_id": 1,
+            "priority": "medium",
+        }
+        mock_run_sdk.return_value = mock_updated
+
+        await update("SIRENA-1", labels="whatever", clear_labels=True)
+
+        mock_resolve_label.assert_not_awaited()
+        update_data = mock_run_sdk.call_args[0][4]
+        assert update_data.labels == []

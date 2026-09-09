@@ -73,6 +73,8 @@ Version and changelog are managed by the agent on `integration-main` only — ne
 - Append a Keep a Changelog section to `CHANGELOG.md` in upstream style, without internal tracker IDs.
 - Cut a release by committing `release: <version>` on `integration-main` and pushing it to the
   planebotcli remote's `main`: `git push planebotcli integration-main:main`.
+- After cutting a release, reinstall the local CLI from the planebotcli remote by default (no need
+  to ask the user first): `uv tool install --force --from git+ssh://git@github.com/Liewzheng/planebotcli.git planecli`.
 
 ## Key docs
 

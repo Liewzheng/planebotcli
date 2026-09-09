@@ -657,7 +657,10 @@ dependencies = [
  "planebotcli-client",
  "planebotcli-core",
  "planebotcli-format",
+ "planebotcli-html",
+ "planebotcli-resolve",
  "planebotcli-types",
+ "serde_json",
  "tokio",
 ]
 
@@ -666,6 +669,7 @@ name = "planebotcli-client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "planebotcli-cache",
  "planebotcli-core",
  "planebotcli-types",
  "reqwest",
@@ -708,6 +712,8 @@ dependencies = [
  "planebotcli-core",
  "planebotcli-types",
  "rapidfuzz",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -715,6 +721,7 @@ name = "planebotcli-types"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]

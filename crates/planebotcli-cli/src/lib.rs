@@ -2185,7 +2185,6 @@ async fn cmd_state_delete(
 }
 
 #[cfg(test)]
-#[cfg(test)]
 mod tests {
     use super::*;
 

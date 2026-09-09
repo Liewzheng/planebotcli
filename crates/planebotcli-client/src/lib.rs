@@ -548,7 +548,12 @@ impl PlaneClient {
         self.cached_list(
             &key,
             TTL_ATTACHMENTS,
-            async move { self.paginate(&path).await },
+            // The attachments list endpoint returns a plain array (like the
+            // members endpoint), not a cursor envelope.
+            async move {
+                self.request_json::<Vec<Attachment>>(reqwest::Method::GET, &path, &[], None)
+                    .await
+            },
         )
         .await
     }
@@ -642,7 +647,7 @@ impl PlaneClient {
         asset_id: &str,
     ) -> Result<(), PlaneError> {
         let path = format!(
-            "{}attachments/{}/",
+            "{}{}/",
             attachments_path(&self.workspace, project_id, work_item_id),
             asset_id
         );

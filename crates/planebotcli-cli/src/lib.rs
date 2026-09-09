@@ -9,7 +9,7 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use planebotcli_cache::Cache;
 use planebotcli_client::{PageScope, PlaneClient};
-use planebotcli_core::{PlaneError, load_config};
+use planebotcli_core::{PlaneError, config_file_path, load_config, save_config};
 use planebotcli_format::{output_json, output_table};
 use planebotcli_resolve::{
     locate_work_item_across, locate_work_item_in_project, resolve_project, resolve_user_query,
@@ -47,6 +47,8 @@ pub struct Cli {
 pub enum Command {
     /// Show the current authenticated user.
     Whoami,
+    /// Configure credentials interactively (base URL, API key, workspace).
+    Configure,
     /// Manage projects.
     Project {
         #[command(subcommand)]
@@ -155,9 +157,15 @@ pub enum CommentCmd {
     Create {
         /// Work item identifier (ABC-123), UUID, or name.
         issue: String,
-        /// Comment text (plain text, converted to HTML).
+        /// Comment text (plain text, converted to HTML). Exactly one of
+        /// --body or --body-md is required.
         #[arg(long, short = 'b')]
         body: Option<String>,
+        /// Comment text in a markdown subset: headings, lists, fenced and
+        /// inline code, bold/italic, auto-linked URLs — converted to HTML.
+        /// Mutually exclusive with --body.
+        #[arg(long)]
+        body_md: Option<String>,
         /// Project name/ID (required for name-based lookup).
         #[arg(long, short = 'p')]
         project: Option<String>,
@@ -169,9 +177,15 @@ pub enum CommentCmd {
         /// Work item identifier (ABC-123), UUID, or name.
         #[arg(long)]
         issue: String,
-        /// New comment text (plain text, converted to HTML).
+        /// New comment text (plain text, converted to HTML). Exactly one of
+        /// --body or --body-md is required.
         #[arg(long, short = 'b')]
-        body: String,
+        body: Option<String>,
+        /// New comment text in a markdown subset: headings, lists, fenced and
+        /// inline code, bold/italic, auto-linked URLs — converted to HTML.
+        /// Mutually exclusive with --body.
+        #[arg(long)]
+        body_md: Option<String>,
         /// Project name/ID (required for name-based lookup).
         #[arg(long, short = 'p')]
         project: Option<String>,
@@ -716,6 +730,11 @@ pub enum WiCmd {
         /// Work item description (plain text, wrapped in a paragraph).
         #[arg(long, short = 'd')]
         description: Option<String>,
+        /// Work item description in a markdown subset: headings, lists, fenced
+        /// and inline code, bold/italic, auto-linked URLs — converted to HTML.
+        /// Mutually exclusive with --description.
+        #[arg(long)]
+        desc_md: Option<String>,
         /// Start date (YYYY-MM-DD).
         #[arg(long)]
         start_date: Option<String>,
@@ -751,6 +770,11 @@ pub enum WiCmd {
         /// New description (plain text, wrapped in a paragraph).
         #[arg(long, short = 'd')]
         description: Option<String>,
+        /// New description in a markdown subset: headings, lists, fenced and
+        /// inline code, bold/italic, auto-linked URLs — converted to HTML.
+        /// Mutually exclusive with --description.
+        #[arg(long)]
+        desc_md: Option<String>,
         /// New start date (YYYY-MM-DD).
         #[arg(long)]
         start_date: Option<String>,
@@ -792,10 +816,17 @@ pub enum WiCmd {
 
 /// Run the parsed CLI and return the first error (mapped to an exit code).
 pub async fn run(cli: Cli) -> Result<(), PlaneError> {
+    // `configure` is fully offline: it must not require an existing config
+    // file or a client, so it dispatches before config loading.
+    if matches!(cli.command, Command::Configure) {
+        return cmd_configure();
+    }
+
     let cfg = load_config()?;
     let client = PlaneClient::with_cache(&cfg, cli.no_cache)?;
 
     match cli.command {
+        Command::Configure => unreachable!("configure is handled before config load"),
         Command::Whoami => cmd_whoami(&client, cli.json).await,
         Command::Project { command } => match command {
             ProjectCmd::List => cmd_project_list(&client, &cfg, cli.no_cache, cli.json).await,
@@ -877,6 +908,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 priority,
                 parent,
                 description,
+                desc_md,
                 start_date,
                 target_date,
             } => {
@@ -888,6 +920,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     priority: priority.as_deref(),
                     parent: parent.as_deref(),
                     description: description.as_deref(),
+                    desc_md: desc_md.as_deref(),
                     start_date: start_date.as_deref(),
                     target_date: target_date.as_deref(),
                 };
@@ -903,6 +936,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 clear_labels,
                 name,
                 description,
+                desc_md,
                 start_date,
                 target_date,
             } => {
@@ -915,6 +949,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     clear_labels,
                     name: name.as_deref(),
                     description: description.as_deref(),
+                    desc_md: desc_md.as_deref(),
                     start_date: start_date.as_deref(),
                     target_date: target_date.as_deref(),
                 };
@@ -962,26 +997,60 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
             CommentCmd::Create {
                 issue,
                 body,
+                body_md,
                 project,
             } => {
-                let body = body.ok_or_else(|| PlaneError::Validation {
-                    message: "Missing --body for comment create.".into(),
-                    hint: Some("Example: planebotcli comment create PROJ-1 --body \"text\"".into()),
-                })?;
-                cmd_comment_write(&client, &issue, project.as_deref(), None, &body, cli.json).await
+                let markdown = body_md.is_some();
+                if body.is_some() && markdown {
+                    return Err(PlaneError::validation_with_hint(
+                        "--body and --body-md are mutually exclusive.",
+                        "Pass the comment text via only one of them.",
+                    ));
+                }
+                let Some(body) = body.or(body_md) else {
+                    return Err(PlaneError::validation_with_hint(
+                        "One of --body or --body-md is required.",
+                        "Example: planebotcli comment create PROJ-1 --body-md '## Notes'",
+                    ));
+                };
+                cmd_comment_write(
+                    &client,
+                    &issue,
+                    project.as_deref(),
+                    None,
+                    &body,
+                    markdown,
+                    cli.json,
+                )
+                .await
             }
             CommentCmd::Update {
                 comment_id,
                 issue,
                 body,
+                body_md,
                 project,
             } => {
+                let markdown = body_md.is_some();
+                if body.is_some() && markdown {
+                    return Err(PlaneError::validation_with_hint(
+                        "--body and --body-md are mutually exclusive.",
+                        "Pass the comment text via only one of them.",
+                    ));
+                }
+                let Some(body) = body.or(body_md) else {
+                    return Err(PlaneError::validation_with_hint(
+                        "One of --body or --body-md is required.",
+                        "Example: planebotcli comment update COMMENT-ID ISSUE --body-md '## Notes'",
+                    ));
+                };
                 cmd_comment_write(
                     &client,
                     &issue,
                     project.as_deref(),
                     Some(&comment_id),
                     &body,
+                    markdown,
                     cli.json,
                 )
                 .await
@@ -1270,6 +1339,42 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
             }
         },
     }
+}
+
+/// Configure credentials interactively, mirroring `app.py::configure`.
+///
+/// Prompts for the base URL, API key, and workspace slug, saves them to
+/// `~/.plane_api` (chmod 600), then clears the disk cache (it may hold data
+/// from a different instance). Fully offline — no existing config or client
+/// required. A missing field prints an error and exits 1 (Python behavior).
+fn cmd_configure() -> Result<(), PlaneError> {
+    let base_url = configure_prompt("Plane base URL (e.g. https://api.plane.so): ");
+    let api_key = configure_prompt("API key: ");
+    let workspace = configure_prompt("Workspace slug: ");
+
+    if base_url.is_empty() || api_key.is_empty() || workspace.is_empty() {
+        // Python exits 1 here (not one of the PlaneError codes).
+        return Err(PlaneError::Other(anyhow::anyhow!(
+            "All fields are required."
+        )));
+    }
+
+    save_config(&base_url, &api_key, &workspace).map_err(|e| PlaneError::Other(e.into()))?;
+    Cache::new().clear();
+    println!("Cache cleared.");
+    println!("\nConfiguration saved to {}.", config_file_path().display());
+    Ok(())
+}
+
+/// Print a prompt to stdout and read one trimmed line from stdin.
+fn configure_prompt(prompt: &str) -> String {
+    use std::io::Write;
+
+    let mut line = String::new();
+    print!("{prompt}");
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stdin().read_line(&mut line);
+    line.trim().to_string()
 }
 
 async fn cmd_whoami(client: &PlaneClient, json: bool) -> Result<(), PlaneError> {
@@ -1747,6 +1852,7 @@ struct CreateOpts<'a> {
     priority: Option<&'a str>,
     parent: Option<&'a str>,
     description: Option<&'a str>,
+    desc_md: Option<&'a str>,
     start_date: Option<&'a str>,
     target_date: Option<&'a str>,
 }
@@ -1761,8 +1867,23 @@ struct UpdateOpts<'a> {
     clear_labels: bool,
     name: Option<&'a str>,
     description: Option<&'a str>,
+    desc_md: Option<&'a str>,
     start_date: Option<&'a str>,
     target_date: Option<&'a str>,
+}
+
+/// `--description` and `--desc-md` are mutually exclusive (Python message).
+fn validate_description_flags(
+    description: Option<&str>,
+    desc_md: Option<&str>,
+) -> Result<(), PlaneError> {
+    if description.is_some() && desc_md.is_some() {
+        return Err(PlaneError::validation_with_hint(
+            "--description and --desc-md are mutually exclusive.",
+            "Pass the description via only one of them.",
+        ));
+    }
+    Ok(())
 }
 
 /// Validate a YYYY-MM-DD date flag; None passes through.
@@ -1893,6 +2014,7 @@ async fn cmd_wi_create(
     opts: &CreateOpts<'_>,
     json: bool,
 ) -> Result<(), PlaneError> {
+    validate_description_flags(opts.description, opts.desc_md)?;
     let project = opts.project.ok_or_else(|| PlaneError::Validation {
         message: "Project is required for this command.".into(),
         hint: Some("Use -p/--project <name-or-id> to specify the project.".into()),
@@ -1911,7 +2033,9 @@ async fn cmd_wi_create(
         name: Some(title.to_string()),
         ..Default::default()
     };
-    if let Some(description) = opts.description {
+    if let Some(md) = opts.desc_md {
+        write.description_html = Some(planebotcli_html::md_to_html(md));
+    } else if let Some(description) = opts.description {
         write.description_html = Some(format!("<p>{description}</p>"));
     }
     if let Some(p) = priority {
@@ -1957,6 +2081,7 @@ async fn cmd_wi_update(
     opts: &UpdateOpts<'_>,
     json: bool,
 ) -> Result<(), PlaneError> {
+    validate_description_flags(opts.description, opts.desc_md)?;
     let located = locate_issue(client, issue, opts.project).await?;
     let project_id = located.project_id.clone();
     let project_identifier = located.project_identifier.clone();
@@ -1972,7 +2097,9 @@ async fn cmd_wi_update(
     if let Some(name) = opts.name {
         write.name = Some(name.to_string());
     }
-    if let Some(description) = opts.description {
+    if let Some(md) = opts.desc_md {
+        write.description_html = Some(planebotcli_html::md_to_html(md));
+    } else if let Some(description) = opts.description {
         write.description_html = Some(format!("<p>{description}</p>"));
     }
     if let Some(p) = priority {
@@ -2157,16 +2284,24 @@ async fn cmd_comment_list(
 }
 
 /// Create or update a comment (create when `comment_id` is None).
+///
+/// `body` is the raw user text; `markdown` selects `md_to_html` over
+/// `body_to_html`.
 async fn cmd_comment_write(
     client: &PlaneClient,
     issue: &str,
     project: Option<&str>,
     comment_id: Option<&str>,
     body: &str,
+    markdown: bool,
     json: bool,
 ) -> Result<(), PlaneError> {
     let located = locate_issue(client, issue, project).await?;
-    let comment_html = planebotcli_html::body_to_html(body);
+    let comment_html = if markdown {
+        planebotcli_html::md_to_html(body)
+    } else {
+        planebotcli_html::body_to_html(body)
+    };
     let write = CommentWrite { comment_html };
     let created = match comment_id {
         None => {

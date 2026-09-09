@@ -4,7 +4,7 @@
 //! lowercase keys (`base_url`, `api_key`, `workspace`), `#` comments, chmod 600.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::errors::PlaneError;
 
@@ -48,6 +48,39 @@ pub fn read_config_file_from(path: &PathBuf) -> HashMap<String, String> {
 
 pub fn read_config_file() -> HashMap<String, String> {
     read_config_file_from(&config_file_path())
+}
+
+/// Save config to `~/.plane_api` with `key=value` lines (chmod 600),
+/// mirroring `config.py::save_config`. Writes go through `write_config_file`
+/// so tests can target a temp path.
+pub fn save_config(base_url: &str, api_key: &str, workspace: &str) -> std::io::Result<()> {
+    write_config_file(&config_file_path(), base_url, api_key, workspace)
+}
+
+fn write_config_file(
+    path: &Path,
+    base_url: &str,
+    api_key: &str,
+    workspace: &str,
+) -> std::io::Result<()> {
+    let content = format!("base_url={base_url}\napi_key={api_key}\nworkspace={workspace}\n");
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?;
+        file.write_all(content.as_bytes())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, content)
+    }
 }
 
 /// Load with explicit env + file maps (injectable for tests).
@@ -144,5 +177,26 @@ mod tests {
         assert_eq!(values.get("base_url").map(String::as_str), Some("http://x"));
         assert_eq!(values.get("api_key").map(String::as_str), Some("abc"));
         assert!(!values.contains_key("workspace"));
+    }
+
+    #[test]
+    fn save_config_writes_key_value_file() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("planecli_save_test_{}", std::process::id()));
+        write_config_file(&path, "http://plane.example", "secret", "ws1").unwrap();
+        let values = read_config_file_from(&path);
+        let permissions = std::fs::metadata(&path).unwrap().permissions();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(permissions.mode() & 0o777, 0o600);
+        }
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(
+            values.get("base_url").map(String::as_str),
+            Some("http://plane.example")
+        );
+        assert_eq!(values.get("api_key").map(String::as_str), Some("secret"));
+        assert_eq!(values.get("workspace").map(String::as_str), Some("ws1"));
     }
 }

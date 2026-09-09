@@ -77,6 +77,11 @@ fork PR branches.
 - After cutting a release, reinstall the local CLI from the merged `integration-main` checkout by
   default (no need to ask first): `cargo install --path crates/planebotcli-cli --locked`
   (installs both `planebotcli` and the `pbot` alias into `~/.cargo/bin`).
+- **Publishing artifacts** (needs the human's go-ahead + external accounts): tag the release and
+  push — `git tag v<version> && git push planebotcli v<version>` — so the committed cargo-dist
+  GitHub Actions workflow builds per-platform archives + shell/powershell installers to the
+  Releases page. npm publish needs an npm scope/token (cargo-dist npm installer config);
+  crates.io `cargo publish` needs a crates.io token.
 - Update the corresponding Plane task the same turn a release lands: progress comment + fitting
   state (per the planecli skill etiquette).
 

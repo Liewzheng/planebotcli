@@ -5,22 +5,37 @@
 //! Endpoints are prefixed with `/api/v1`; workspace-scoped resources take the
 //! workspace slug from the config. Authentication is the `X-Api-Key` header.
 
+use planebotcli_cache::Cache;
 use planebotcli_core::{Config, PlaneError};
 use planebotcli_types::{
     Comment, CommentWrite, Label, LabelWrite, Member, Project, ProjectWrite, State, StateWrite,
     User, WorkItem, WorkItemWrite,
 };
 use serde::de::DeserializeOwned;
+use std::time::Duration;
+
+/// Cache TTLs, mirroring the Python CLI's per-resource TTLs.
+const TTL_MEMBERS: Duration = Duration::from_secs(300);
+const TTL_PROJECTS: Duration = Duration::from_secs(60);
+const TTL_STATES: Duration = Duration::from_secs(120);
+const TTL_LABELS: Duration = Duration::from_secs(120);
+const TTL_WORK_ITEMS: Duration = Duration::from_secs(60);
 
 pub struct PlaneClient {
     http: reqwest::Client,
     base_url: String,
     api_key: String,
     workspace: String,
+    cache: Cache,
+    no_cache: bool,
 }
 
 impl PlaneClient {
     pub fn new(cfg: &Config) -> Result<Self, PlaneError> {
+        Self::with_cache(cfg, false)
+    }
+
+    pub fn with_cache(cfg: &Config, no_cache: bool) -> Result<Self, PlaneError> {
         let http = reqwest::Client::builder()
             .user_agent("planebotcli/0.1.0")
             .build()
@@ -32,11 +47,41 @@ impl PlaneClient {
             base_url: cfg.base_url.clone(),
             api_key: cfg.api_key.clone(),
             workspace: cfg.workspace.clone(),
+            cache: Cache::new(),
+            no_cache,
         })
     }
 
     pub fn workspace(&self) -> &str {
         &self.workspace
+    }
+
+    /// Read a cached list, or fetch + store it (disabled under `--no-cache`).
+    async fn cached_list<T>(
+        &self,
+        key: &str,
+        ttl: std::time::Duration,
+        fetch: impl std::future::Future<Output = Result<Vec<T>, PlaneError>>,
+    ) -> Result<Vec<T>, PlaneError>
+    where
+        T: DeserializeOwned + serde::Serialize,
+    {
+        if !self.no_cache
+            && let Some(value) = self.cache.get::<Vec<T>>(key, ttl)
+        {
+            return Ok(value);
+        }
+        let value = fetch.await?;
+        if !self.no_cache {
+            self.cache.set(key, &value);
+        }
+        Ok(value)
+    }
+
+    fn invalidate(&self, prefix: &str) {
+        if !self.no_cache {
+            self.cache.invalidate(prefix);
+        }
     }
 
     async fn request_json<T: DeserializeOwned>(
@@ -116,9 +161,13 @@ impl PlaneClient {
 
     /// `GET /api/v1/workspaces/{ws}/members/` — returns a plain array.
     pub async fn list_members(&self) -> Result<Vec<Member>, PlaneError> {
+        let key = format!("members:{}", self.workspace);
         let path = format!("/api/v1/workspaces/{}/members/", self.workspace);
-        self.request_json(reqwest::Method::GET, &path, &[], None)
-            .await
+        self.cached_list(&key, TTL_MEMBERS, async move {
+            self.request_json(reqwest::Method::GET, &path, &[], None)
+                .await
+        })
+        .await
     }
 
     /// `GET /api/v1/workspaces/{ws}/projects/{id}/`
@@ -131,17 +180,26 @@ impl PlaneClient {
             .await
     }
 
-    /// `GET /api/v1/workspaces/{ws}/projects/` — paginated (cursor-based).
+    /// `GET /api/v1/workspaces/{ws}/projects/` — paginated (cached).
     pub async fn list_projects(&self) -> Result<Vec<Project>, PlaneError> {
+        let key = format!("projects:{}", self.workspace);
         let path = format!("/api/v1/workspaces/{}/projects/", self.workspace);
-        self.paginate(&path).await
+        self.cached_list(
+            &key,
+            TTL_PROJECTS,
+            async move { self.paginate(&path).await },
+        )
+        .await
     }
 
     /// `POST /api/v1/workspaces/{ws}/projects/`
     pub async fn create_project(&self, body: &ProjectWrite) -> Result<Project, PlaneError> {
         let path = format!("/api/v1/workspaces/{}/projects/", self.workspace);
-        self.request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
-            .await
+        let result = self
+            .request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("projects:{}", self.workspace));
+        result
     }
 
     /// `PATCH /api/v1/workspaces/{ws}/projects/{id}/`
@@ -154,8 +212,11 @@ impl PlaneClient {
             "/api/v1/workspaces/{}/projects/{}/",
             self.workspace, project_id
         );
-        self.request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
-            .await
+        let result = self
+            .request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("projects:{}", self.workspace));
+        result
     }
 
     /// `DELETE /api/v1/workspaces/{ws}/projects/{id}/`
@@ -170,13 +231,15 @@ impl PlaneClient {
         Ok(())
     }
 
-    /// `GET /api/v1/workspaces/{ws}/projects/{pid}/labels/`
+    /// `GET /api/v1/workspaces/{ws}/projects/{pid}/labels/` (cached).
     pub async fn list_labels(&self, project_id: &str) -> Result<Vec<Label>, PlaneError> {
+        let key = format!("labels:{}:{}", self.workspace, project_id);
         let path = format!(
             "/api/v1/workspaces/{}/projects/{}/labels/",
             self.workspace, project_id
         );
-        self.paginate(&path).await
+        self.cached_list(&key, TTL_LABELS, async move { self.paginate(&path).await })
+            .await
     }
 
     /// `POST /api/v1/workspaces/{ws}/projects/{pid}/labels/`
@@ -193,13 +256,15 @@ impl PlaneClient {
             .await
     }
 
-    /// `GET /api/v1/workspaces/{ws}/projects/{pid}/states/`
+    /// `GET /api/v1/workspaces/{ws}/projects/{pid}/states/` (cached).
     pub async fn list_states(&self, project_id: &str) -> Result<Vec<State>, PlaneError> {
+        let key = format!("states:{}:{}", self.workspace, project_id);
         let path = format!(
             "/api/v1/workspaces/{}/projects/{}/states/",
             self.workspace, project_id
         );
-        self.paginate(&path).await
+        self.cached_list(&key, TTL_STATES, async move { self.paginate(&path).await })
+            .await
     }
 
     /// `POST /api/v1/workspaces/{ws}/projects/{pid}/states/`
@@ -216,13 +281,19 @@ impl PlaneClient {
             .await
     }
 
-    /// `GET /api/v1/workspaces/{ws}/projects/{pid}/work-items/` — all pages.
+    /// `GET /api/v1/workspaces/{ws}/projects/{pid}/work-items/` — all pages (cached).
     pub async fn list_work_items(&self, project_id: &str) -> Result<Vec<WorkItem>, PlaneError> {
+        let key = format!("work_items:{}:{}", self.workspace, project_id);
         let path = format!(
             "/api/v1/workspaces/{}/projects/{}/work-items/",
             self.workspace, project_id
         );
-        self.paginate(&path).await
+        self.cached_list(
+            &key,
+            TTL_WORK_ITEMS,
+            async move { self.paginate(&path).await },
+        )
+        .await
     }
 
     /// `GET /api/v1/workspaces/{ws}/projects/{pid}/work-items/{id}/?expand=estimate_point`
@@ -250,8 +321,11 @@ impl PlaneClient {
             "/api/v1/workspaces/{}/projects/{}/work-items/",
             self.workspace, project_id
         );
-        self.request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
-            .await
+        let result = self
+            .request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("work_items:{}:{}", self.workspace, project_id));
+        result
     }
 
     /// `PATCH /api/v1/workspaces/{ws}/projects/{pid}/work-items/{id}/`
@@ -265,8 +339,11 @@ impl PlaneClient {
             "/api/v1/workspaces/{}/projects/{}/work-items/{}",
             self.workspace, project_id, work_item_id
         );
-        self.request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
-            .await
+        let result = self
+            .request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("work_items:{}:{}", self.workspace, project_id));
+        result
     }
 
     /// `DELETE /api/v1/workspaces/{ws}/projects/{pid}/work-items/{id}/`
@@ -282,6 +359,7 @@ impl PlaneClient {
         let _: serde_json::Value = self
             .request_json(reqwest::Method::DELETE, &path, &[], None)
             .await?;
+        self.invalidate(&format!("work_items:{}:{}", self.workspace, project_id));
         Ok(())
     }
 

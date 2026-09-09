@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+planebotcli-cache = { path = "../planebotcli-cache" }
 planebotcli-core = { path = "../planebotcli-core" }
 planebotcli-types = { path = "../planebotcli-types" }
 reqwest = { workspace = true }

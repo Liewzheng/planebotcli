@@ -26,17 +26,7 @@ impl Cache {
     }
 
     fn path_for(&self, key: &str) -> PathBuf {
-        let safe: String = key
-            .chars()
-            .map(|c| {
-                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                    c
-                } else {
-                    '_'
-                }
-            })
-            .collect();
-        self.dir.join(format!("{safe}.json"))
+        self.dir.join(format!("{}.json", self.sanitize(key)))
     }
 
     /// Return the cached value if present and younger than `ttl`.
@@ -63,15 +53,28 @@ impl Cache {
 
     /// Remove every entry whose key starts with `key_prefix`.
     pub fn invalidate(&self, key_prefix: &str) {
+        let safe_prefix = self.sanitize(key_prefix);
         let Ok(entries) = std::fs::read_dir(&self.dir) else {
             return;
         };
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with(key_prefix) {
+            if name.starts_with(&safe_prefix) {
                 let _ = std::fs::remove_file(entry.path());
             }
         }
+    }
+
+    fn sanitize(&self, key: &str) -> String {
+        key.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect()
     }
 
     pub fn clear(&self) {

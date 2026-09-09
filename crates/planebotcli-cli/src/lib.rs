@@ -60,6 +60,29 @@ pub enum Command {
         #[command(subcommand)]
         command: CommentCmd,
     },
+    /// Workspace members.
+    User {
+        #[command(subcommand)]
+        command: UserCmd,
+    },
+    /// Manage the local disk cache.
+    Cache {
+        #[command(subcommand)]
+        command: CacheCmd,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum UserCmd {
+    /// List workspace members.
+    #[command(alias = "ls")]
+    List,
+}
+
+#[derive(Subcommand)]
+pub enum CacheCmd {
+    /// Clear the disk cache.
+    Clear,
 }
 
 /// Options shared by every `comment` command.
@@ -227,12 +250,42 @@ pub enum WiCmd {
         #[arg(long)]
         target_date: Option<String>,
     },
+    /// Delete a work item.
+    Delete {
+        /// Work item identifier (ABC-123), UUID, or name.
+        issue: String,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Search work items by text.
+    Search {
+        /// Search query string.
+        query: String,
+        /// Limit search to a specific project.
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Maximum results to show.
+        #[arg(long, short = 'l')]
+        limit: Option<usize>,
+    },
+    /// Assign a work item (defaults to yourself).
+    Assign {
+        /// Work item identifier (ABC-123), UUID, or name.
+        issue: String,
+        /// Assignee name, email, or 'me' (default).
+        #[arg(long, visible_alias = "assign")]
+        assignee: Option<String>,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
 }
 
 /// Run the parsed CLI and return the first error (mapped to an exit code).
 pub async fn run(cli: Cli) -> Result<(), PlaneError> {
     let cfg = load_config()?;
-    let client = PlaneClient::new(&cfg)?;
+    let client = PlaneClient::with_cache(&cfg, cli.no_cache)?;
 
     match cli.command {
         Command::Whoami => cmd_whoami(&client, cli.json).await,
@@ -327,6 +380,29 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 };
                 cmd_wi_update(&client, &cfg.base_url, &issue, &opts, cli.json).await
             }
+            WiCmd::Delete { issue, project } => {
+                cmd_wi_delete(&client, &issue, project.as_deref()).await
+            }
+            WiCmd::Search {
+                query,
+                project,
+                limit,
+            } => {
+                cmd_wi_search(
+                    &client,
+                    &cfg.base_url,
+                    &query,
+                    project.as_deref(),
+                    limit.unwrap_or(20),
+                    cli.json,
+                )
+                .await
+            }
+            WiCmd::Assign {
+                issue,
+                assignee,
+                project,
+            } => cmd_wi_assign(&client, &issue, assignee.as_deref(), project.as_deref()).await,
         },
         Command::Comment { command } => match command {
             CommentCmd::List {
@@ -375,6 +451,16 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 issue,
                 project,
             } => cmd_comment_delete(&client, &issue, project.as_deref(), &comment_id).await,
+        },
+        Command::User { command } => match command {
+            UserCmd::List => cmd_user_list(&client, cli.json).await,
+        },
+        Command::Cache { command } => match command {
+            CacheCmd::Clear => {
+                Cache::new().clear();
+                eprintln!("Cache cleared.");
+                Ok(())
+            }
         },
     }
 }
@@ -1281,6 +1367,119 @@ fn fmt_ts(s: &str) -> String {
     }
 }
 
+async fn cmd_wi_delete(
+    client: &PlaneClient,
+    issue: &str,
+    project: Option<&str>,
+) -> Result<(), PlaneError> {
+    let located = locate_issue(client, issue, project).await?;
+    let name = located
+        .item
+        .name
+        .clone()
+        .unwrap_or_else(|| located.item.id.clone());
+    client
+        .delete_work_item(&located.project_id, &located.item.id)
+        .await?;
+    eprintln!("Work item '{name}' deleted.");
+    Ok(())
+}
+
+async fn cmd_wi_search(
+    client: &PlaneClient,
+    base_url: &str,
+    query: &str,
+    _project: Option<&str>,
+    limit: usize,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let workspace = client.workspace().to_string();
+    let members = client.list_members().await?;
+    let member_map: HashMap<String, String> = members
+        .into_iter()
+        .map(|m| {
+            let name = m.full_name();
+            (m.id, name)
+        })
+        .collect();
+    let items = client.search_work_items(query).await?;
+    let lookups = Lookups {
+        state_map: HashMap::new(),
+        label_map: HashMap::new(),
+        member_map,
+    };
+    let views: Vec<Value> = items
+        .iter()
+        .take(limit)
+        .map(|item| {
+            let identifier = item
+                .project_detail
+                .as_ref()
+                .and_then(|d| d.identifier.clone())
+                .unwrap_or_default();
+            work_item_view(item, &identifier, &lookups, base_url, &workspace)
+        })
+        .collect();
+    if json {
+        output_json(&views);
+    } else {
+        let rows: Vec<Vec<String>> = views
+            .iter()
+            .map(|v| {
+                vec![
+                    v["sequence_id"].as_str().unwrap_or("").to_string(),
+                    v["name"].as_str().unwrap_or("").to_string(),
+                    v["priority"].as_str().unwrap_or("").to_string(),
+                    v["state_detail_name"].as_str().unwrap_or("").to_string(),
+                    v["assignee_names"].as_str().unwrap_or("").to_string(),
+                ]
+            })
+            .collect();
+        output_table(&["ID", "Title", "Priority", "State", "Assignees"], &rows);
+    }
+    Ok(())
+}
+
+async fn cmd_wi_assign(
+    client: &PlaneClient,
+    issue: &str,
+    assignee: Option<&str>,
+    project: Option<&str>,
+) -> Result<(), PlaneError> {
+    let located = locate_issue(client, issue, project).await?;
+    let (user_id, user_name) = resolve_user_query(assignee.unwrap_or("me"), client).await?;
+    let write = WorkItemWrite {
+        assignees: Some(vec![user_id]),
+        ..Default::default()
+    };
+    client
+        .update_work_item(&located.project_id, &located.item.id, &write)
+        .await?;
+    eprintln!("Work item assigned to {user_name}.");
+    Ok(())
+}
+
+async fn cmd_user_list(client: &PlaneClient, json: bool) -> Result<(), PlaneError> {
+    let members = client.list_members().await?;
+    if json {
+        output_json(&members);
+    } else {
+        let rows: Vec<Vec<String>> = members
+            .iter()
+            .map(|m| {
+                vec![
+                    m.id.clone(),
+                    m.full_name(),
+                    m.email.clone().unwrap_or_default(),
+                ]
+            })
+            .collect();
+        output_table(&["ID", "Name", "Email"], &rows);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 #[cfg(test)]
 mod tests {
     use super::*;

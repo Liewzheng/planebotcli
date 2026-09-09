@@ -1,0 +1,19 @@
+[package]
+name = "planebotcli-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "planebotcli"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+planebotcli-cache = { path = "../planebotcli-cache" }
+planebotcli-client = { path = "../planebotcli-client" }
+planebotcli-core = { path = "../planebotcli-core" }
+planebotcli-format = { path = "../planebotcli-format" }
+planebotcli-types = { path = "../planebotcli-types" }
+tokio = { workspace = true }

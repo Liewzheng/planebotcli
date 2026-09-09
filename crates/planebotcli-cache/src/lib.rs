@@ -1,0 +1,114 @@
+//! Minimal TTL disk cache: one JSON file per key under a cache directory.
+//!
+//! Mirrors the Python CLI's per-resource disk cache (`src/planecli/cache.py`):
+//! reads are cached with a TTL, and writes invalidate the affected resource.
+//! The ops are synchronous file I/O — small files, fast.
+
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
+
+pub struct Cache {
+    dir: PathBuf,
+}
+
+impl Default for Cache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Cache {
+    pub fn new() -> Self {
+        let dir = dirs::cache_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join("planebotcli");
+        Self { dir }
+    }
+
+    fn path_for(&self, key: &str) -> PathBuf {
+        let safe: String = key
+            .chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        self.dir.join(format!("{safe}.json"))
+    }
+
+    /// Return the cached value if present and younger than `ttl`.
+    pub fn get<T: serde::de::DeserializeOwned>(&self, key: &str, ttl: Duration) -> Option<T> {
+        let path = self.path_for(key);
+        let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
+        if SystemTime::now()
+            .duration_since(modified)
+            .map(|d| d > ttl)
+            .unwrap_or(true)
+        {
+            return None;
+        }
+        let data = std::fs::read_to_string(&path).ok()?;
+        serde_json::from_str(&data).ok()
+    }
+
+    pub fn set<T: serde::Serialize>(&self, key: &str, value: &T) {
+        let _ = std::fs::create_dir_all(&self.dir);
+        if let Ok(data) = serde_json::to_string(value) {
+            let _ = std::fs::write(self.path_for(key), data);
+        }
+    }
+
+    /// Remove every entry whose key starts with `key_prefix`.
+    pub fn invalidate(&self, key_prefix: &str) {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with(key_prefix) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
+
+    pub fn clear(&self) {
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_and_get_roundtrip() {
+        let cache = Cache {
+            dir: std::env::temp_dir()
+                .join(format!("planebotcli_cache_test_{}", std::process::id())),
+        };
+        cache.clear();
+        cache.set("projects:ws", &vec![1u32, 2, 3]);
+        let got: Option<Vec<u32>> = cache.get("projects:ws", Duration::from_secs(60));
+        assert_eq!(got, Some(vec![1, 2, 3]));
+        cache.clear();
+    }
+
+    #[test]
+    fn ttl_expiry_returns_none() {
+        let cache = Cache {
+            dir: std::env::temp_dir()
+                .join(format!("planebotcli_cache_test_{}", std::process::id())),
+        };
+        cache.clear();
+        cache.set("k", &42u32);
+        let got: Option<u32> = cache.get("k", Duration::from_millis(1));
+        std::thread::sleep(Duration::from_millis(5));
+        let expired: Option<u32> = cache.get("k", Duration::from_millis(1));
+        assert_eq!(got, Some(42));
+        assert_eq!(expired, None);
+        cache.clear();
+    }
+}

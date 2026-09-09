@@ -26,3 +26,6 @@ planebotcli-resolve = { path = "../planebotcli-resolve" }
 planebotcli-types = { path = "../planebotcli-types" }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+
+[dev-dependencies]
+mockito = "1"

@@ -2744,7 +2744,17 @@ async fn cmd_doc_list(
     project: Option<&str>,
     json: bool,
 ) -> Result<(), PlaneError> {
-    let scope = page_scope(client, project).await?;
+    // Python parity: listing documents is project-scoped only.
+    let pid = match project {
+        Some(p) => resolve_project(p, client).await?.id,
+        None => {
+            return Err(PlaneError::Validation {
+                message: "Project is required for listing documents.".into(),
+                hint: Some("Use -p/--project <name-or-id> to specify the project.".into()),
+            });
+        }
+    };
+    let scope = planebotcli_client::PageScope::Project(pid);
     let pages = client.list_pages(&scope).await?;
     if json {
         let views: Vec<Value> = pages.iter().map(page_json).collect();

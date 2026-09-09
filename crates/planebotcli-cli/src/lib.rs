@@ -3,6 +3,7 @@
 mod render;
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
@@ -18,7 +19,9 @@ use planebotcli_types::{
     Module, ModuleWrite, Page, PageWrite, Project, ProjectWrite, State, StateWrite, WorkItem,
     WorkItemWrite,
 };
-use render::{Lookups, comment_json, intake_status_label, intake_view, work_item_view};
+use render::{
+    Lookups, attachment_json, comment_json, intake_status_label, intake_view, work_item_view,
+};
 use serde_json::{Value, json};
 
 #[derive(Parser)]
@@ -63,6 +66,12 @@ pub enum Command {
     Comment {
         #[command(subcommand)]
         command: CommentCmd,
+    },
+    /// Manage work item attachments (file uploads).
+    #[command(visible_alias = "attachments")]
+    Attachment {
+        #[command(subcommand)]
+        command: AttachmentCmd,
     },
     /// Manage project labels.
     Label {
@@ -173,6 +182,39 @@ pub enum CommentCmd {
         comment_id: String,
         /// Work item identifier (ABC-123), UUID, or name.
         #[arg(long)]
+        issue: String,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+}
+
+/// Manage work item attachments.
+#[derive(Subcommand)]
+pub enum AttachmentCmd {
+    /// Upload a file attachment to a work item.
+    ///
+    /// Registers the upload, pushes the bytes to the presigned URL, marks the
+    /// attachment uploaded, and verifies the server recorded it (a 2xx is not
+    /// proof of a write — see ADR-0007).
+    #[command(alias = "upload", visible_alias = "new")]
+    Attach {
+        /// Work item identifier (ABC-123), UUID, or name.
+        issue: String,
+        /// Path to the file to upload.
+        #[arg(long, short = 'f')]
+        file: String,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Upload even if an attachment with the same file name already exists.
+        #[arg(long)]
+        force: bool,
+    },
+    /// List attachments on a work item.
+    #[command(alias = "ls")]
+    List {
+        /// Work item identifier (ABC-123), UUID, or name.
         issue: String,
         /// Project name/ID (required for name-based lookup).
         #[arg(long, short = 'p')]
@@ -949,6 +991,20 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 issue,
                 project,
             } => cmd_comment_delete(&client, &issue, project.as_deref(), &comment_id).await,
+        },
+        Command::Attachment { command } => match command {
+            AttachmentCmd::Attach {
+                issue,
+                file,
+                project,
+                force,
+            } => {
+                cmd_attachment_attach(&client, &issue, &file, project.as_deref(), force, cli.json)
+                    .await
+            }
+            AttachmentCmd::List { issue, project } => {
+                cmd_attachment_list(&client, &issue, project.as_deref(), cli.json).await
+            }
         },
         Command::Label { command } => match command {
             LabelCmd::List { project } => {
@@ -2160,6 +2216,211 @@ async fn cmd_comment_delete(
         .delete_comment(&located.project_id, &located.item.id, comment_id)
         .await?;
     eprintln!("Comment {comment_id} deleted.");
+    Ok(())
+}
+
+/// Guess a MIME type from a filename extension, defaulting to
+/// application/octet-stream (the common-type subset of Python's
+/// `mimetypes.guess_type`, which the Python `_guess_mime` wraps).
+fn guess_mime(filename: &str) -> String {
+    let ext = Path::new(filename)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "tif" | "tiff" => "image/tiff",
+        "pdf" => "application/pdf",
+        "txt" => "text/plain",
+        "md" | "markdown" => "text/markdown",
+        "csv" => "text/csv",
+        "html" | "htm" => "text/html",
+        "css" => "text/css",
+        "js" | "mjs" => "text/javascript",
+        "json" => "application/json",
+        "xml" => "application/xml",
+        "yaml" | "yml" => "application/yaml",
+        "zip" => "application/zip",
+        "gz" => "application/gzip",
+        "tar" => "application/x-tar",
+        "7z" => "application/x-7z-compressed",
+        "rar" => "application/vnd.rar",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "flac" => "audio/flac",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "avi" => "video/x-msvideo",
+        "mkv" => "video/x-matroska",
+        "doc" => "application/msword",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xls" => "application/vnd.ms-excel",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ppt" => "application/vnd.ms-powerpoint",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "rtf" => "application/rtf",
+        _ => "application/octet-stream",
+    };
+    mime.to_string()
+}
+
+/// Render a JSON scalar (number/string/bool/null) as a table cell.
+fn scalar_cell(value: &Value) -> String {
+    match value {
+        Value::Null => String::new(),
+        Value::Bool(b) => b.to_string(),
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+async fn cmd_attachment_list(
+    client: &PlaneClient,
+    issue: &str,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let located = locate_issue(client, issue, project).await?;
+    let attachments = client
+        .list_attachments(&located.project_id, &located.item.id)
+        .await?;
+    if json {
+        let views: Vec<Value> = attachments.iter().map(attachment_json).collect();
+        output_json(&views);
+    } else {
+        let rows: Vec<Vec<String>> = attachments
+            .iter()
+            .map(|a| {
+                let view = attachment_json(a);
+                vec![
+                    view["id"].as_str().unwrap_or("").to_string(),
+                    view["name"].as_str().unwrap_or("").to_string(),
+                    view["type"].as_str().unwrap_or("").to_string(),
+                    scalar_cell(&view["size"]),
+                    scalar_cell(&view["is_uploaded"]),
+                    fmt_ts(view["created_at"].as_str().unwrap_or("")),
+                ]
+            })
+            .collect();
+        output_table(
+            &["ID", "Name", "Type", "Size", "Uploaded", "Created"],
+            &rows,
+        );
+    }
+    Ok(())
+}
+
+/// Upload a file to a work item (mirrors the Python `upload_attachment`):
+/// duplicate-name check -> register -> presigned push -> finalize -> read the
+/// list back and verify the asset landed (a 2xx is not proof of a write, see
+/// ADR-0007).
+async fn cmd_attachment_attach(
+    client: &PlaneClient,
+    issue: &str,
+    file: &str,
+    project: Option<&str>,
+    force: bool,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let located = locate_issue(client, issue, project).await?;
+
+    // Preflight the file, mirroring the Python os.path.isfile/getsize checks.
+    let path = Path::new(file);
+    let meta = std::fs::metadata(path).map_err(|_| PlaneError::Validation {
+        message: format!("File not found: {file}"),
+        hint: None,
+    })?;
+    if !meta.is_file() {
+        return Err(PlaneError::Validation {
+            message: format!("File not found: {file}"),
+            hint: None,
+        });
+    }
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| !n.is_empty())
+        .ok_or_else(|| PlaneError::Validation {
+            message: format!("Invalid file name: {file}"),
+            hint: None,
+        })?
+        .to_string();
+    let size = meta.len();
+    let mime = guess_mime(&name);
+
+    // Duplicate guard: same-named attachments are easy to create by accident
+    // and hard to tell apart in the web UI (deleting the wrong one breaks
+    // embedded images). Refuse unless --force.
+    let listed = client
+        .list_attachments(&located.project_id, &located.item.id)
+        .await?;
+    let existing = listed
+        .iter()
+        .filter(|a| !a.is_deleted.unwrap_or(false) && a.name() == name)
+        .count();
+    if existing > 0 && !force {
+        return Err(PlaneError::Validation {
+            message: format!("Upload cancelled: '{name}' is already attached ({existing}x)."),
+            hint: Some("Re-run with --force to upload anyway.".into()),
+        });
+    }
+
+    // 1. Register the attachment -> a presigned upload target + asset id.
+    let created = client
+        .register_attachment(&located.project_id, &located.item.id, &name, &mime, size)
+        .await?;
+    let asset_id = created
+        .get("asset_id")
+        .and_then(Value::as_str)
+        .or_else(|| created.get("id").and_then(Value::as_str))
+        .ok_or_else(|| PlaneError::Api {
+            message: "the register response did not include an attachment asset id.".into(),
+        })?
+        .to_string();
+    let upload_data = created.get("upload_data").ok_or_else(|| PlaneError::Api {
+        message: "the register response did not include presigned upload data.".into(),
+    })?;
+
+    // 2. Push the bytes to the presigned URL. The signature lives in the
+    // multipart form fields — no X-Api-Key header on this request.
+    let bytes = std::fs::read(path).map_err(|e| PlaneError::Api {
+        message: format!("failed to read {file}: {e}"),
+    })?;
+    client
+        .upload_to_presigned(upload_data, &name, &mime, bytes)
+        .await?;
+
+    // 3. Mark the attachment uploaded, then read the list back and verify the
+    // asset is present with is_uploaded=true (see ADR-0007).
+    client
+        .finalize_attachment(&located.project_id, &located.item.id, &asset_id)
+        .await?;
+    let after = client
+        .list_attachments(&located.project_id, &located.item.id)
+        .await?;
+    let mine = after
+        .iter()
+        .find(|a| a.id == asset_id && a.is_uploaded.unwrap_or(false))
+        .ok_or_else(|| PlaneError::Api {
+            message: "Attachment was not confirmed by the server after upload.".into(),
+        })?;
+
+    if json {
+        output_json(&attachment_json(mine));
+    } else {
+        eprintln!("Attached {name} ({size} bytes) to {issue}.");
+    }
     Ok(())
 }
 
@@ -3752,5 +4013,16 @@ mod tests {
         };
         let view = page_json(&page);
         assert_eq!(view["content_text"], "");
+    }
+
+    #[test]
+    fn mime_guesses_by_extension_and_defaults_to_octet_stream() {
+        assert_eq!(guess_mime("shot.png"), "image/png");
+        assert_eq!(guess_mime("notes.JPG"), "image/jpeg");
+        assert_eq!(guess_mime("spec.pdf"), "application/pdf");
+        assert_eq!(guess_mime("archive.tar.gz"), "application/gzip");
+        assert_eq!(guess_mime("noextension"), "application/octet-stream");
+        assert_eq!(guess_mime("mystery.xyz"), "application/octet-stream");
+        assert_eq!(guess_mime(""), "application/octet-stream");
     }
 }

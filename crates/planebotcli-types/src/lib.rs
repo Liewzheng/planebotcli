@@ -375,3 +375,66 @@ pub struct PageWrite {
     #[serde(rename = "description_html")]
     pub description_html: Option<String>,
 }
+
+/// A work-item attachment as returned by the attachment endpoints.
+///
+/// The original filename/MIME live in the nested `attributes` object, and the
+/// byte count may appear at the top level or only under `attributes`;
+/// [`Attachment::name`]/[`Attachment::content_type`]/[`Attachment::size_bytes`]
+/// flatten both shapes, mirroring the Python `_enrich_attachment`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Attachment {
+    pub id: String,
+    /// Underlying asset UUID; equals `id` on work-item-scoped records.
+    #[serde(default, rename = "asset_id")]
+    pub asset_id: Option<String>,
+    /// Nested `{name, type, size}` metadata captured at register time.
+    #[serde(default)]
+    pub attributes: Option<Value>,
+    /// Top-level byte count (some serializers only expose it in `attributes`).
+    #[serde(default)]
+    pub size: Option<Value>,
+    #[serde(default, rename = "is_uploaded")]
+    pub is_uploaded: Option<bool>,
+    #[serde(default, rename = "is_deleted")]
+    pub is_deleted: Option<bool>,
+    #[serde(rename = "created_at")]
+    pub created_at: Option<String>,
+    #[serde(rename = "updated_at")]
+    pub updated_at: Option<String>,
+}
+
+impl Attachment {
+    fn attribute(&self, key: &str) -> String {
+        self.attributes
+            .as_ref()
+            .and_then(|a| a.get(key))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    /// Original filename, stored under the nested `attributes` object.
+    pub fn name(&self) -> String {
+        self.attribute("name")
+    }
+
+    /// MIME type captured at register time (the nested `type` field).
+    pub fn content_type(&self) -> String {
+        self.attribute("type")
+    }
+
+    /// Byte count: the top-level `size` when present, else `attributes.size`.
+    pub fn size_bytes(&self) -> Option<Value> {
+        self.size
+            .as_ref()
+            .filter(|v| !v.is_null())
+            .or_else(|| {
+                self.attributes
+                    .as_ref()
+                    .and_then(|a| a.get("size"))
+                    .filter(|v| !v.is_null())
+            })
+            .cloned()
+    }
+}

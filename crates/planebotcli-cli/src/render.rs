@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use planebotcli_html::strip_html_tags;
-use planebotcli_types::{Comment, IntakeItem, WorkItem};
+use planebotcli_types::{Attachment, Comment, IntakeItem, WorkItem};
 use serde_json::{Value, json};
 
 /// Lookup maps used to resolve UUIDs to human names.
@@ -256,6 +256,26 @@ pub fn intake_view(item: &IntakeItem) -> Value {
     })
 }
 
+/// Enriched JSON view of an attachment, mirroring the Python `_enrich_attachment`:
+/// `name`/`type`/`size` are flattened from the nested `attributes` object so
+/// table and JSON consumers see one consistent shape. The top-level `size`
+/// wins when both are present; the raw `attributes` stay in the output.
+pub fn attachment_json(attachment: &Attachment) -> Value {
+    let attributes = attachment.attributes.clone().unwrap_or(Value::Null);
+    json!({
+        "id": attachment.id,
+        "asset_id": attachment.asset_id.clone().unwrap_or_default(),
+        "attributes": attributes,
+        "name": attachment.name(),
+        "type": attachment.content_type(),
+        "size": attachment.size_bytes().unwrap_or(Value::Null),
+        "is_uploaded": attachment.is_uploaded.unwrap_or(false),
+        "is_deleted": attachment.is_deleted.unwrap_or(false),
+        "created_at": attachment.created_at.clone().unwrap_or_default(),
+        "updated_at": attachment.updated_at.clone().unwrap_or_default(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -344,5 +364,49 @@ mod tests {
             work_item_view(&item2, "", &Lookups::default(), "http://x", "ws")["priority"],
             "urgent"
         );
+    }
+
+    #[test]
+    fn attachment_view_flattens_attributes_and_keeps_them() {
+        let att = Attachment {
+            id: "a1".into(),
+            attributes: Some(json!({"name": "spec.pdf", "type": "application/pdf", "size": 123})),
+            is_uploaded: Some(true),
+            created_at: Some("2026-09-08T04:54:06.446Z".into()),
+            ..Default::default()
+        };
+        let view = attachment_json(&att);
+        assert_eq!(view["name"], "spec.pdf");
+        assert_eq!(view["type"], "application/pdf");
+        assert_eq!(view["size"].as_u64(), Some(123));
+        assert_eq!(view["is_uploaded"], true);
+        assert_eq!(view["is_deleted"], false);
+        assert_eq!(view["attributes"]["name"], "spec.pdf");
+        assert_eq!(view["created_at"], "2026-09-08T04:54:06.446Z");
+    }
+
+    #[test]
+    fn attachment_view_top_level_size_wins_and_missing_attrs_are_empty() {
+        // Top-level `size` beats `attributes.size` (Python flatten semantics).
+        let att = Attachment {
+            id: "a2".into(),
+            asset_id: Some("a2".into()),
+            attributes: Some(json!({"size": 999})),
+            size: Some(json!(42)),
+            ..Default::default()
+        };
+        let view = attachment_json(&att);
+        assert_eq!(view["size"].as_u64(), Some(42));
+        assert_eq!(view["asset_id"], "a2");
+
+        let bare = Attachment {
+            id: "a3".into(),
+            ..Default::default()
+        };
+        let view = attachment_json(&bare);
+        assert_eq!(view["name"], "");
+        assert_eq!(view["type"], "");
+        assert_eq!(view["size"], Value::Null);
+        assert_eq!(view["is_uploaded"], false);
     }
 }

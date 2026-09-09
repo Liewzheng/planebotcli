@@ -8,9 +8,9 @@
 use planebotcli_cache::Cache;
 use planebotcli_core::{Config, PlaneError};
 use planebotcli_types::{
-    Comment, CommentWrite, Cycle, CycleWrite, IntakeItem, IntakeWrite, Label, LabelWrite, Member,
-    Module, ModuleWrite, Page, PageWrite, Project, ProjectWrite, State, StateWrite, User, WorkItem,
-    WorkItemWrite,
+    Attachment, Comment, CommentWrite, Cycle, CycleWrite, IntakeItem, IntakeWrite, Label,
+    LabelWrite, Member, Module, ModuleWrite, Page, PageWrite, Project, ProjectWrite, State,
+    StateWrite, User, WorkItem, WorkItemWrite,
 };
 use serde::de::DeserializeOwned;
 use std::time::Duration;
@@ -25,6 +25,7 @@ const TTL_INTAKE: Duration = Duration::from_secs(60);
 const TTL_MODULES: Duration = Duration::from_secs(300);
 const TTL_CYCLES: Duration = Duration::from_secs(300);
 const TTL_PAGES: Duration = Duration::from_secs(120);
+const TTL_ATTACHMENTS: Duration = Duration::from_secs(120);
 
 /// The two places pages (documents) live: directly under the workspace, or
 /// under one of its projects.
@@ -536,6 +537,127 @@ impl PlaneClient {
         Ok(())
     }
 
+    /// `GET .../work-items/{id}/attachments/` — all pages (cached).
+    pub async fn list_attachments(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+    ) -> Result<Vec<Attachment>, PlaneError> {
+        let key = attachment_cache_key(&self.workspace, project_id, work_item_id);
+        let path = attachments_path(&self.workspace, project_id, work_item_id);
+        self.cached_list(
+            &key,
+            TTL_ATTACHMENTS,
+            async move { self.paginate(&path).await },
+        )
+        .await
+    }
+
+    /// `POST .../work-items/{id}/attachments/` — register an upload and get the
+    /// presigned multipart target.
+    ///
+    /// Returns the raw response so the caller can read `asset_id` and the
+    /// nested `upload_data` (their shape varies between Plane versions).
+    pub async fn register_attachment(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+        name: &str,
+        mime: &str,
+        size: u64,
+    ) -> Result<serde_json::Value, PlaneError> {
+        let path = attachments_path(&self.workspace, project_id, work_item_id);
+        let body = serde_json::json!({ "name": name, "type": mime, "size": size });
+        let result = self
+            .request_json(reqwest::Method::POST, &path, &[], Some(&body))
+            .await;
+        self.invalidate(&attachment_cache_key(
+            &self.workspace,
+            project_id,
+            work_item_id,
+        ));
+        result
+    }
+
+    /// Push the file bytes to the presigned URL carried in `upload_data`.
+    ///
+    /// Every string field of the nested `fields` object becomes a multipart
+    /// form field and the bytes ride under the `file` part — the same shape
+    /// the Python CLI sends. The request carries no `X-Api-Key`: the signature
+    /// lives in the form fields.
+    pub async fn upload_to_presigned(
+        &self,
+        upload_data: &serde_json::Value,
+        file_name: &str,
+        mime: &str,
+        bytes: Vec<u8>,
+    ) -> Result<(), PlaneError> {
+        let url = upload_data
+            .get("url")
+            .and_then(|v| v.as_str())
+            .ok_or(PlaneError::Api {
+                message: "the register response is missing the presigned upload url.".into(),
+            })?;
+        let mut form = reqwest::multipart::Form::new();
+        if let Some(fields) = upload_data.get("fields").and_then(|v| v.as_object()) {
+            for (key, value) in fields {
+                if let Some(value) = value.as_str() {
+                    form = form.text(key.clone(), value.to_string());
+                }
+            }
+        }
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(file_name.to_string())
+            .mime_str(mime)
+            .map_err(|e| PlaneError::Api {
+                message: format!("invalid MIME type for the attachment upload: {e}"),
+            })?;
+        form = form.part("file", part);
+        let resp = self
+            .http
+            .post(url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| PlaneError::Api {
+                message: format!("presigned upload to {url} failed: {e}"),
+            })?;
+        let status = resp.status();
+        if !matches!(status.as_u16(), 200 | 201 | 204) {
+            return Err(PlaneError::Api {
+                message: format!("File upload failed: HTTP {}", status.as_u16()),
+            });
+        }
+        Ok(())
+    }
+
+    /// `PATCH .../attachments/{asset_id}/` with `{"is_uploaded": true}`.
+    ///
+    /// A 2xx here is not proof the write landed (ADR-0007); the caller reads
+    /// the attachment list back and verifies the asset before reporting.
+    pub async fn finalize_attachment(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+        asset_id: &str,
+    ) -> Result<(), PlaneError> {
+        let path = format!(
+            "{}attachments/{}/",
+            attachments_path(&self.workspace, project_id, work_item_id),
+            asset_id
+        );
+        let body = serde_json::json!({ "is_uploaded": true });
+        let result: Result<serde_json::Value, PlaneError> = self
+            .request_json(reqwest::Method::PATCH, &path, &[], Some(&body))
+            .await;
+        self.invalidate(&attachment_cache_key(
+            &self.workspace,
+            project_id,
+            work_item_id,
+        ));
+        result.map(|_| ())
+    }
+
     /// `GET .../projects/{pid}/modules/` — all pages (cached).
     pub async fn list_modules(&self, project_id: &str) -> Result<Vec<Module>, PlaneError> {
         let key = format!("modules:{}:{}", self.workspace, project_id);
@@ -929,6 +1051,18 @@ impl PlaneClient {
         self.invalidate(&format!("intake:{}:{}", self.workspace, project_id));
         self.invalidate(&format!("work_items:{}:{}", self.workspace, project_id));
     }
+}
+
+/// URL path for a work item's attachments collection (ends with `/`).
+fn attachments_path(workspace: &str, project_id: &str, work_item_id: &str) -> String {
+    format!(
+        "/api/v1/workspaces/{workspace}/projects/{project_id}/work-items/{work_item_id}/attachments/"
+    )
+}
+
+/// Cache key for one work item's attachment list.
+fn attachment_cache_key(workspace: &str, project_id: &str, work_item_id: &str) -> String {
+    format!("attachments:{workspace}:{project_id}:{work_item_id}")
 }
 
 /// Serialize a request body, dropping `null` fields so PATCH bodies only carry

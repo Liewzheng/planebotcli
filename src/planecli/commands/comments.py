@@ -14,6 +14,7 @@ from planecli.api.async_sdk import run_sdk
 from planecli.api.client import get_client, get_workspace, handle_api_error
 from planecli.exceptions import PlaneCLIError
 from planecli.formatters import output, output_single
+from planecli.utils.body_html import md_to_html
 from planecli.utils.resolve import (
     resolve_work_item_across_projects_async,
     resolve_work_item_async,
@@ -218,7 +219,8 @@ async def list_(
 async def create(
     issue: str,
     *,
-    body: Annotated[str, Parameter(alias="-b")],
+    body: Annotated[str | None, Parameter(alias="-b")] = None,
+    body_md: str | None = None,
     project: Annotated[str | None, Parameter(alias="-p")] = None,
     json: bool = False,
 ) -> None:
@@ -229,11 +231,29 @@ async def create(
     issue
         Work item identifier (ABC-123) or UUID.
     body
-        Comment text (plain text, converted to HTML).
+        Comment text (plain text, converted to HTML). Exactly one of body
+        or body-md is required.
+    body_md
+        Comment text written in a markdown subset: headings, lists, fenced
+        and inline code, bold/italic, auto-linked URLs — converted to HTML.
+        Mutually exclusive with --body.
     project
         Project name/ID (required for name-based lookup).
     """
     from plane.models.work_items import CreateWorkItemComment
+
+    from planecli.exceptions import ValidationError
+
+    if body is not None and body_md is not None:
+        raise ValidationError(
+            "--body and --body-md are mutually exclusive.",
+            hint="Pass the comment text via only one of them.",
+        )
+    if body is None and body_md is None:
+        raise ValidationError(
+            "One of --body or --body-md is required.",
+            hint="Example: planecli comment create PROJ-1 --body-md '## Notes'",
+        )
 
     try:
         client = get_client()
@@ -252,7 +272,8 @@ async def create(
 
         item_id = item["id"]
 
-        comment_data = CreateWorkItemComment(comment_html=_body_to_html(body))
+        comment_html = md_to_html(body_md) if body_md is not None else _body_to_html(body)
+        comment_data = CreateWorkItemComment(comment_html=comment_html)
         comment = await run_sdk(
             client.work_items.comments.create,
             workspace,
@@ -280,7 +301,8 @@ async def update(
     comment_id: str,
     *,
     issue: str,
-    body: Annotated[str, Parameter(alias="-b")],
+    body: Annotated[str | None, Parameter(alias="-b")] = None,
+    body_md: str | None = None,
     project: Annotated[str | None, Parameter(alias="-p")] = None,
     json: bool = False,
 ) -> None:
@@ -293,11 +315,29 @@ async def update(
     issue
         Work item identifier (ABC-123) or UUID.
     body
-        New comment text (plain text, converted to HTML).
+        New comment text (plain text, converted to HTML). Exactly one of
+        body or body-md is required.
+    body_md
+        New comment text written in a markdown subset: headings, lists,
+        fenced and inline code, bold/italic, auto-linked URLs — converted
+        to HTML. Mutually exclusive with --body.
     project
         Project name/ID (required for name-based lookup).
     """
     from plane.models.work_items import UpdateWorkItemComment
+
+    from planecli.exceptions import ValidationError
+
+    if body is not None and body_md is not None:
+        raise ValidationError(
+            "--body and --body-md are mutually exclusive.",
+            hint="Pass the comment text via only one of them.",
+        )
+    if body is None and body_md is None:
+        raise ValidationError(
+            "One of --body or --body-md is required.",
+            hint="Example: planecli comment update COMMENT-ID ISSUE --body-md '## Notes'",
+        )
 
     try:
         client = get_client()
@@ -316,7 +356,8 @@ async def update(
 
         item_id = item["id"]
 
-        update_data = UpdateWorkItemComment(comment_html=_body_to_html(body))
+        comment_html = md_to_html(body_md) if body_md is not None else _body_to_html(body)
+        update_data = UpdateWorkItemComment(comment_html=comment_html)
         comment = await run_sdk(
             client.work_items.comments.update,
             workspace,

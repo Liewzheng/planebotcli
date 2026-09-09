@@ -15,6 +15,7 @@ from rich.text import Text
 from planecli.api.async_sdk import create_client, run_sdk
 from planecli.api.client import get_client, get_config, get_workspace, handle_api_error
 from planecli.formatters import output, output_single
+from planecli.utils.body_html import md_to_html
 from planecli.utils.colors import PRIORITY_COLORS, colorize, lighten_hex
 from planecli.utils.resolve import (
     resolve_estimate_point_async,
@@ -645,6 +646,7 @@ async def create(
     parent: str | None = None,
     estimate: Annotated[int | None, Parameter(alias="-e")] = None,
     description: Annotated[str | None, Parameter(alias="-d")] = None,
+    desc_md: str | None = None,
     start_date: str | None = None,
     target_date: str | None = None,
     image: Annotated[list[str] | None, Parameter(alias="-i")] = None,
@@ -675,6 +677,10 @@ async def create(
         Story point estimate.
     description
         Work item description (plain text).
+    desc_md
+        Work item description written in a markdown subset: headings, lists,
+        fenced and inline code, bold/italic, auto-linked URLs — converted to
+        HTML. Mutually exclusive with --description.
     start_date
         Start date (YYYY-MM-DD). Defaults to the creation date when omitted.
     target_date
@@ -689,6 +695,14 @@ async def create(
 
     start_date = _validate_date(start_date, "--start-date")
     target_date = _validate_date(target_date, "--target-date")
+
+    if description is not None and desc_md is not None:
+        from planecli.exceptions import ValidationError
+
+        raise ValidationError(
+            "--description and --desc-md are mutually exclusive.",
+            hint="Pass the description via only one of them.",
+        )
 
     try:
         client = get_client()
@@ -710,7 +724,9 @@ async def create(
 
         create_data = CreateWorkItem(name=title)
 
-        if description and not image:
+        if desc_md is not None:
+            create_data.description_html = md_to_html(desc_md)
+        elif description and not image:
             create_data.description_html = f"<p>{description}</p>"
 
         if start_date:
@@ -796,7 +812,9 @@ async def create(
 
             from planecli.commands.attachments import embed_html, upload_embed_image
 
-            parts = [f"<p>{description}</p>"] if description else []
+            parts = [md_to_html(desc_md)] if desc_md is not None else (
+                [f"<p>{description}</p>"] if description else []
+            )
             for path in image:
                 asset_id = await upload_embed_image(
                     client, workspace, project_id, data["id"], path, force=force
@@ -829,6 +847,7 @@ async def update(
     name: str | None = None,
     estimate: Annotated[int | None, Parameter(alias="-e")] = None,
     description: Annotated[str | None, Parameter(alias="-d")] = None,
+    desc_md: str | None = None,
     start_date: str | None = None,
     target_date: str | None = None,
     image: Annotated[list[str] | None, Parameter(alias="-i")] = None,
@@ -859,6 +878,10 @@ async def update(
         Story point estimate.
     description
         New description (plain text).
+    desc_md
+        New description written in a markdown subset: headings, lists, fenced
+        and inline code, bold/italic, auto-linked URLs — converted to HTML.
+        Mutually exclusive with --description.
     start_date
         New start date (YYYY-MM-DD).
     target_date
@@ -866,7 +889,7 @@ async def update(
     image
         Image file path to embed in the description (repeatable). Uploaded as
         an attachment and appended to the existing description, or to the new
-        --description if one is given.
+        --description (or --desc-md) if one is given.
     force
         Upload images even if an attachment with the same file name already exists.
     """
@@ -874,6 +897,14 @@ async def update(
 
     start_date = _validate_date(start_date, "--start-date")
     target_date = _validate_date(target_date, "--target-date")
+
+    if description is not None and desc_md is not None:
+        from planecli.exceptions import ValidationError
+
+        raise ValidationError(
+            "--description and --desc-md are mutually exclusive.",
+            hint="Pass the description via only one of them.",
+        )
 
     try:
         client = get_client()
@@ -895,13 +926,16 @@ async def update(
             update_data.name = name
 
         # Embed images: upload each, then append <img> tags — to the new
-        # --description when given, otherwise to the existing one.
+        # --description (or --desc-md) when given, otherwise to the existing one.
         if image:
             from planecli.commands.attachments import embed_html, upload_embed_image
 
-            parts = [f"<p>{description}</p>"] if description else [
-                item_data.get("description_html") or ""
-            ]
+            if desc_md is not None:
+                parts = [md_to_html(desc_md)]
+            elif description:
+                parts = [f"<p>{description}</p>"]
+            else:
+                parts = [item_data.get("description_html") or ""]
             for path in image:
                 asset_id = await upload_embed_image(
                     client, workspace, project_id, item_id, path, force=force
@@ -909,7 +943,9 @@ async def update(
                 parts.append(embed_html(asset_id))
             update_data.description_html = "".join(parts)
 
-        if description and not image:
+        if desc_md is not None and not image:
+            update_data.description_html = md_to_html(desc_md)
+        elif description and not image:
             update_data.description_html = f"<p>{description}</p>"
 
         if priority:

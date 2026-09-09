@@ -8,6 +8,8 @@ import pytest
 from plane.errors import PlaneError
 
 from planecli.commands.comments import _body_to_html, _enrich_comment
+from planecli.exceptions import ValidationError
+from planecli.utils.body_html import md_to_html
 
 
 def test_body_to_html_wraps_single_line_in_one_paragraph():
@@ -78,6 +80,77 @@ def test_body_to_html_converts_fenced_block_to_pre():
 def test_body_to_html_fenced_block_ignores_language_hint():
     body = "```python\nprint(1)\n```"
     assert _body_to_html(body) == "<pre><code>print(1)</code></pre>"
+
+
+def test_md_to_html_escapes_user_text_in_heading():
+    assert (
+        md_to_html("# <script>alert(1)</script>")
+        == "<h1>&lt;script&gt;alert(1)&lt;/script&gt;</h1>"
+    )
+
+
+def test_md_to_html_escapes_user_text_in_paragraph():
+    assert md_to_html('a <b href="x">y</b>') == "<p>a &lt;b href=&quot;x&quot;&gt;y&lt;/b&gt;</p>"
+
+
+def test_md_to_html_headings_all_levels():
+    assert md_to_html("# one") == "<h1>one</h1>"
+    assert md_to_html("###### six") == "<h6>six</h6>"
+
+
+def test_md_to_html_heading_strips_closing_hashes():
+    assert md_to_html("## Title ##") == "<h2>Title</h2>"
+
+
+def test_md_to_html_plain_hash_line_is_a_paragraph():
+    assert md_to_html("#nospace") == "<p>#nospace</p>"
+
+
+def test_md_to_html_blank_lines_split_paragraphs():
+    assert md_to_html("one\n\n\ntwo") == "<p>one</p><p>two</p>"
+
+
+def test_md_to_html_unordered_list_bullets():
+    assert md_to_html("- a\n- b") == "<ul><li>a</li><li>b</li></ul>"
+    assert md_to_html("* a\n+ b") == "<ul><li>a</li><li>b</li></ul>"
+
+
+def test_md_to_html_ordered_list():
+    assert md_to_html("1. first\n2. second") == "<ol><li>first</li><li>second</li></ol>"
+
+
+def test_md_to_html_bullet_change_starts_new_list():
+    assert md_to_html("- a\n\n1. b") == "<ul><li>a</li></ul><ol><li>b</li></ol>"
+
+
+def test_md_to_html_list_item_content_gets_inline_markup():
+    assert md_to_html("- `x` and https://a/1") == (
+        '<ul><li><code>x</code> and <a href="https://a/1">https://a/1</a></li></ul>'
+    )
+
+
+def test_md_to_html_fenced_block_becomes_pre_code():
+    html = md_to_html("before\n\n```py\nprint('<x>')\n```\n\nafter")
+    assert html == "<p>before</p><pre><code>print(&#x27;&lt;x&gt;&#x27;)</code></pre><p>after</p>"
+
+
+def test_md_to_html_inline_code_is_escaped_and_not_linkified():
+    html = md_to_html("use `https://x.io <b>` here")
+    assert html == "<p>use <code>https://x.io &lt;b&gt;</code> here</p>"
+
+
+def test_md_to_html_linkifies_bare_url():
+    html = md_to_html("see https://example.com/a, ok")
+    assert html == '<p>see <a href="https://example.com/a">https://example.com/a</a>, ok</p>'
+
+
+def test_md_to_html_bold_and_italic():
+    assert md_to_html("**bold** and *italic*") == "<p><strong>bold</strong> and <em>italic</em></p>"
+    assert md_to_html("__bold__ and _italic_") == "<p><strong>bold</strong> and <em>italic</em></p>"
+
+
+def test_md_to_html_underscore_inside_word_is_not_italic():
+    assert md_to_html("snake_case_name") == "<p>snake_case_name</p>"
 
 
 def test_enrich_comment_resolves_actor_name_from_members_map():
@@ -310,6 +383,75 @@ async def test_comment_update_invalidates_cache(
     await update("comment-1", issue="ABC-1", body="edited")
 
     mock_invalidate.assert_awaited_once_with("comments", "ws", "p1", "item-1")
+
+
+@patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
+@patch("planecli.commands.comments.run_sdk", new_callable=AsyncMock)
+@patch(
+    "planecli.commands.comments.resolve_work_item_across_projects_async",
+    new_callable=AsyncMock,
+)
+@patch("planecli.commands.comments.get_workspace", return_value="ws")
+@patch("planecli.commands.comments.get_client")
+async def test_comment_create_with_body_md_converts_markdown(
+    mock_client, mock_ws, mock_resolve, mock_run_sdk, mock_invalidate
+):
+    from planecli.commands.comments import create
+
+    mock_resolve.return_value = ({"id": "item-1"}, "p1")
+    mock_run_sdk.return_value = MagicMock(
+        model_dump=lambda: {"id": "c1", "comment_html": "<h1>x</h1>", "actor": "u1"}
+    )
+
+    await create("ABC-1", body_md="# Title\n\n- a\n- b")
+
+    comment_data = mock_run_sdk.call_args[0][4]
+    assert comment_data.comment_html == "<h1>Title</h1><ul><li>a</li><li>b</li></ul>"
+
+
+@patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
+@patch("planecli.commands.comments.run_sdk", new_callable=AsyncMock)
+@patch(
+    "planecli.commands.comments.resolve_work_item_across_projects_async",
+    new_callable=AsyncMock,
+)
+@patch("planecli.commands.comments.get_workspace", return_value="ws")
+@patch("planecli.commands.comments.get_client")
+async def test_comment_update_with_body_md_converts_markdown(
+    mock_client, mock_ws, mock_resolve, mock_run_sdk, mock_invalidate
+):
+    from planecli.commands.comments import update
+
+    mock_resolve.return_value = ({"id": "item-1"}, "p1")
+    mock_run_sdk.return_value = MagicMock(
+        model_dump=lambda: {"id": "c1", "comment_html": "<h2>x</h2>", "actor": "u1"}
+    )
+
+    await update("comment-1", issue="ABC-1", body_md="## Notes")
+
+    update_data = mock_run_sdk.call_args[0][5]
+    assert update_data.comment_html == "<h2>Notes</h2>"
+
+
+async def test_comment_create_rejects_body_and_body_md_together():
+    from planecli.commands.comments import create
+
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        await create("ABC-1", body="plain", body_md="# md")
+
+
+async def test_comment_create_requires_a_body_flag():
+    from planecli.commands.comments import create
+
+    with pytest.raises(ValidationError, match="required"):
+        await create("ABC-1")
+
+
+async def test_comment_update_rejects_body_and_body_md_together():
+    from planecli.commands.comments import update
+
+    with pytest.raises(ValidationError, match="mutually exclusive"):
+        await update("comment-1", issue="ABC-1", body="plain", body_md="# md")
 
 
 @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)

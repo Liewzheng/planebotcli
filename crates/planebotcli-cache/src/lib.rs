@@ -86,12 +86,18 @@ impl Cache {
 mod tests {
     use super::*;
 
+    fn test_cache(name: &str) -> Cache {
+        Cache {
+            dir: std::env::temp_dir().join(format!(
+                "planebotcli_cache_test_{}_{name}",
+                std::process::id()
+            )),
+        }
+    }
+
     #[test]
     fn set_and_get_roundtrip() {
-        let cache = Cache {
-            dir: std::env::temp_dir()
-                .join(format!("planebotcli_cache_test_{}", std::process::id())),
-        };
+        let cache = test_cache("rt");
         cache.clear();
         cache.set("projects:ws", &vec![1u32, 2, 3]);
         let got: Option<Vec<u32>> = cache.get("projects:ws", Duration::from_secs(60));
@@ -101,15 +107,13 @@ mod tests {
 
     #[test]
     fn ttl_expiry_returns_none() {
-        let cache = Cache {
-            dir: std::env::temp_dir()
-                .join(format!("planebotcli_cache_test_{}", std::process::id())),
-        };
+        let cache = test_cache("ttl");
         cache.clear();
         cache.set("k", &42u32);
-        let got: Option<u32> = cache.get("k", Duration::from_millis(1));
-        std::thread::sleep(Duration::from_millis(5));
-        let expired: Option<u32> = cache.get("k", Duration::from_millis(1));
+        // TTL of 50ms is long enough that the write is never "already expired".
+        let got: Option<u32> = cache.get("k", Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(80));
+        let expired: Option<u32> = cache.get("k", Duration::from_millis(50));
         assert_eq!(got, Some(42));
         assert_eq!(expired, None);
         cache.clear();

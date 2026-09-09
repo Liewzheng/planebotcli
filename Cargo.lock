@@ -656,7 +656,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "planebotcli-cache"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "dirs",
  "serde",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "planebotcli-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "planebotcli-client"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "planebotcli-cache",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "planebotcli-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -705,7 +705,7 @@ dependencies = [
 
 [[package]]
 name = "planebotcli-format"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -714,7 +714,7 @@ dependencies = [
 
 [[package]]
 name = "planebotcli-html"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "html-escape",
  "regex",
@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "planebotcli-resolve"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "planebotcli-client",
  "planebotcli-core",
@@ -734,7 +734,7 @@ dependencies = [
 
 [[package]]
 name = "planebotcli-types"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "serde",
  "serde_json",

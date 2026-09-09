@@ -5,7 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.0] - 2026-09-09
+
+### Changed
+- **Rewritten in Rust.** The CLI is now `planebotcli` / `pbot` — a single static
+  binary built from a Cargo workspace (`crates/planebotcli-{types,client,
+  resolve,cache,html,format,core,cli}`), replacing the Python implementation
+  line. No Python runtime required.
+- Full feature parity with the Python v0.7.0 line: every command group
+  (whoami, configure, project, wi, comment, attachment, doc, intake, label,
+  state, module, cycle, user, cache), fuzzy resolution (name / `ABC-123` /
+  UUID), the dual output contract (`--json` → stdout, table → stderr),
+  per-resource disk cache with write invalidation, write verification by
+  read-back (dates, intake triage, attachment/uploads), markdown input
+  (`--body-md` / `--desc-md`), inline image embedding (`-i`), `web_url`
+  output, and HTTP-status + field-level error messages.
+- Install: `cargo install --path crates/planebotcli-cli` (installs both
+  `planebotcli` and the `pbot` alias). The Python line is frozen to bug fixes
+  (kept on tags/branches).
 
 ## [0.7.0] - 2026-09-09
 

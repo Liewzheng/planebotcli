@@ -64,17 +64,19 @@ Request flow: **command → resolve → async SDK wrapper → (cache | Plane SDK
 ## Release management
 
 The release repo `github.com/Liewzheng/planebotcli` keeps a single `main` that mirrors the local
-`integration-main` branch (upstream `main` + every adapted feature/fix branch, history preserved).
-Version and changelog are managed by the agent on `integration-main` only — never on upstream
-`main` or on the fork PR branches.
+`integration-main` branch. Since **1.0.0 (2026-09-09) the CLI is the Rust rewrite** (`planebotcli` /
+`pbot`, a Cargo workspace in `crates/`); the Python line is frozen to bug fixes. Version and
+changelog are managed by the agent on `integration-main` only — never on upstream `main` or the
+fork PR branches.
 
-- Keep SemVer: bump the minor for new commands/flags, the patch for bug fixes. Edit the version in
-  `pyproject.toml` **and** in the `planecli` package entry of `uv.lock` together.
+- Keep SemVer: bump the minor for new commands/flags, the patch for bug fixes. The single version
+  lives in the workspace root `Cargo.toml` (`[workspace.package] version`).
 - Append a Keep a Changelog section to `CHANGELOG.md` in upstream style, without internal tracker IDs.
 - Cut a release by committing `release: <version>` on `integration-main` and pushing it to the
   planebotcli remote's `main`: `git push planebotcli integration-main:main`.
-- After cutting a release, reinstall the local CLI from the planebotcli remote by default (no need
-  to ask the user first): `uv tool install --force --from git+ssh://git@github.com/Liewzheng/planebotcli.git planecli`.
+- After cutting a release, reinstall the local CLI from the merged `integration-main` checkout by
+  default (no need to ask first): `cargo install --path crates/planebotcli-cli --locked`
+  (installs both `planebotcli` and the `pbot` alias into `~/.cargo/bin`).
 - Update the corresponding Plane task the same turn a release lands: progress comment + fitting
   state (per the planecli skill etiquette).
 

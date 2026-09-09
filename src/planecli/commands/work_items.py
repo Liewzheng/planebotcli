@@ -219,6 +219,73 @@ def _validate_date(value: str | None, flag: str) -> str | None:
     return value
 
 
+async def _validate_state_and_labels(
+    workspace: str,
+    project_id: str,
+    *,
+    state: str | None = None,
+    labels: str | None = None,
+) -> None:
+    """Pre-check that requested --state/--labels names exist in the project.
+
+    Mirrors the resolver matching rules (exact case-insensitive or fuzzy, see
+    planecli.utils.fuzzy), so anything that would resolve is never rejected
+    here. UUID inputs are skipped — the resolvers handle those via the API.
+    Resolution stays authoritative; this only turns a fuzzy-miss into a
+    ValidationError that names what the project actually has.
+    """
+    from planecli.cache import cached_list_labels, cached_list_projects, cached_list_states
+    from planecli.exceptions import ValidationError
+    from planecli.utils.fuzzy import find_best_match
+    from planecli.utils.resolve import _is_uuid
+
+    state_query = state.strip() if state else None
+    label_names = [ln.strip() for ln in labels.split(",") if ln.strip()] if labels else []
+
+    if state_query and _is_uuid(state_query):
+        state_query = None
+    label_names = [ln for ln in label_names if not _is_uuid(ln)]
+    if not state_query and not label_names:
+        return
+
+    states, labels_list = await asyncio.gather(
+        cached_list_states(workspace, project_id),
+        cached_list_labels(workspace, project_id),
+    )
+
+    # Human-readable project reference for the error (identifier beats UUID);
+    # a projects-list failure degrades to the raw project id.
+    project_ref = project_id
+    try:
+        projects = await cached_list_projects(workspace)
+    except PlaneError:
+        projects = []
+    for p in projects:
+        if p.get("id") == project_id and p.get("identifier"):
+            project_ref = p["identifier"]
+            break
+
+    def _available(items: list[dict]) -> str:
+        names = [str(i["name"]) for i in items if i.get("name")]
+        return ", ".join(names) if names else "(none)"
+
+    if state_query:
+        match = find_best_match(state_query, states, key=lambda s: s.get("name", ""))
+        if match is None:
+            raise ValidationError(
+                f"State '{state_query}' not found in project {project_ref}. "
+                f"Available: {_available(states)}"
+            )
+
+    for ln in label_names:
+        match = find_best_match(ln, labels_list, key=lambda lb: lb.get("name", ""))
+        if match is None:
+            raise ValidationError(
+                f"Label '{ln}' not found in project {project_ref}. "
+                f"Available: {_available(labels_list)}"
+            )
+
+
 async def _fetch_project_data(
     client, workspace: str, project_id: str
 ) -> tuple[list[dict], list[dict], list[dict]]:
@@ -651,6 +718,12 @@ async def create(
             create_data.parent = parent_data["id"]
             idx += 1
 
+        # Write-before validation: reject unknown state/label names up front,
+        # listing what the project has, instead of fuzzy-failing mid-resolution.
+        await _validate_state_and_labels(
+            workspace, project_id, state=state, labels=labels
+        )
+
         # Resolve state, labels, and estimate (depend on project_id) in parallel
         dependent_tasks = []
         dep_keys = []
@@ -827,6 +900,12 @@ async def update(
         if priority:
             priority_map = {"0": "none", "1": "urgent", "2": "high", "3": "medium", "4": "low"}
             update_data.priority = priority_map.get(priority, priority.lower())
+
+        # Write-before validation: reject unknown state/label names up front.
+        # --clear-labels discards --labels, so there is nothing to validate then.
+        await _validate_state_and_labels(
+            workspace, project_id, state=state, labels=labels if not clear_labels else None
+        )
 
         # Resolve assignee, state, labels, and estimate in parallel
         parallel_tasks = []

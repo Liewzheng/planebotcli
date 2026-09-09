@@ -3,6 +3,7 @@ name = "planebotcli-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+autobins = false
 
 [[bin]]
 name = "planebotcli"
@@ -10,7 +11,7 @@ path = "src/main.rs"
 
 [[bin]]
 name = "pbot"
-path = "src/main.rs"
+path = "src/bin/pbot.rs"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -19,5 +20,8 @@ planebotcli-cache = { path = "../planebotcli-cache" }
 planebotcli-client = { path = "../planebotcli-client" }
 planebotcli-core = { path = "../planebotcli-core" }
 planebotcli-format = { path = "../planebotcli-format" }
+planebotcli-html = { path = "../planebotcli-html" }
+planebotcli-resolve = { path = "../planebotcli-resolve" }
 planebotcli-types = { path = "../planebotcli-types" }
+serde_json = { workspace = true }
 tokio = { workspace = true }

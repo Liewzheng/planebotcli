@@ -98,7 +98,9 @@ pub struct State {
     pub name: Option<String>,
     pub group: Option<String>,
     pub color: Option<String>,
-    pub sequence: Option<i64>,
+    /// Numeric sequence; the API returns integers or floats depending on the
+    /// project sort config.
+    pub sequence: Option<serde_json::Value>,
     #[serde(rename = "created_at")]
     pub created_at: Option<String>,
 }

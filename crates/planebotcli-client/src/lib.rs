@@ -114,10 +114,11 @@ impl PlaneClient {
             .await
     }
 
-    /// `GET /api/v1/workspaces/{ws}/members/`
+    /// `GET /api/v1/workspaces/{ws}/members/` — returns a plain array.
     pub async fn list_members(&self) -> Result<Vec<Member>, PlaneError> {
         let path = format!("/api/v1/workspaces/{}/members/", self.workspace);
-        self.paginate(&path).await
+        self.request_json(reqwest::Method::GET, &path, &[], None)
+            .await
     }
 
     /// `GET /api/v1/workspaces/{ws}/projects/{id}/`
@@ -126,7 +127,8 @@ impl PlaneClient {
             "/api/v1/workspaces/{}/projects/{}/",
             self.workspace, project_id
         );
-        self.request_json(reqwest::Method::GET, &path, &[], None).await
+        self.request_json(reqwest::Method::GET, &path, &[], None)
+            .await
     }
 
     /// `GET /api/v1/workspaces/{ws}/projects/` — paginated (cursor-based).
@@ -162,8 +164,9 @@ impl PlaneClient {
             "/api/v1/workspaces/{}/projects/{}/",
             self.workspace, project_id
         );
-        let _: serde_json::Value =
-            self.request_json(reqwest::Method::DELETE, &path, &[], None).await?;
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::DELETE, &path, &[], None)
+            .await?;
         Ok(())
     }
 
@@ -177,7 +180,11 @@ impl PlaneClient {
     }
 
     /// `POST /api/v1/workspaces/{ws}/projects/{pid}/labels/`
-    pub async fn create_label(&self, project_id: &str, body: &LabelWrite) -> Result<Label, PlaneError> {
+    pub async fn create_label(
+        &self,
+        project_id: &str,
+        body: &LabelWrite,
+    ) -> Result<Label, PlaneError> {
         let path = format!(
             "/api/v1/workspaces/{}/projects/{}/labels/",
             self.workspace, project_id
@@ -196,7 +203,11 @@ impl PlaneClient {
     }
 
     /// `POST /api/v1/workspaces/{ws}/projects/{pid}/states/`
-    pub async fn create_state(&self, project_id: &str, body: &StateWrite) -> Result<State, PlaneError> {
+    pub async fn create_state(
+        &self,
+        project_id: &str,
+        body: &StateWrite,
+    ) -> Result<State, PlaneError> {
         let path = format!(
             "/api/v1/workspaces/{}/projects/{}/states/",
             self.workspace, project_id
@@ -225,7 +236,8 @@ impl PlaneClient {
             self.workspace, project_id, work_item_id
         );
         let expand = [("expand", "estimate_point".to_string())];
-        self.request_json(reqwest::Method::GET, &path, &expand, None).await
+        self.request_json(reqwest::Method::GET, &path, &expand, None)
+            .await
     }
 
     /// `POST /api/v1/workspaces/{ws}/projects/{pid}/work-items/`
@@ -267,8 +279,9 @@ impl PlaneClient {
             "/api/v1/workspaces/{}/projects/{}/work-items/{}",
             self.workspace, project_id, work_item_id
         );
-        let _: serde_json::Value =
-            self.request_json(reqwest::Method::DELETE, &path, &[], None).await?;
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::DELETE, &path, &[], None)
+            .await?;
         Ok(())
     }
 
@@ -276,7 +289,8 @@ impl PlaneClient {
     pub async fn search_work_items(&self, query: &str) -> Result<Vec<WorkItem>, PlaneError> {
         let path = format!("/api/v1/workspaces/{}/work-items/search/", self.workspace);
         let q = [("query", query.to_string())];
-        self.request_json(reqwest::Method::GET, &path, &q, None).await
+        self.request_json(reqwest::Method::GET, &path, &q, None)
+            .await
     }
 
     /// `GET .../work-items/{id}/comments/`
@@ -334,8 +348,9 @@ impl PlaneClient {
             "/api/v1/workspaces/{}/projects/{}/work-items/{}/comments/{}",
             self.workspace, project_id, work_item_id, comment_id
         );
-        let _: serde_json::Value =
-            self.request_json(reqwest::Method::DELETE, &path, &[], None).await?;
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::DELETE, &path, &[], None)
+            .await?;
         Ok(())
     }
 }

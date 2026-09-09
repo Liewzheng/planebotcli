@@ -75,6 +75,45 @@ pub async fn resolve_project(query: &str, client: &PlaneClient) -> Result<Projec
     })
 }
 
+/// Resolve a user reference to an (id, display name) pair: `me` resolves to
+/// the authenticated user, a UUID is accepted as-is, otherwise the query is
+/// fuzzy-matched against workspace member names.
+pub async fn resolve_user_query(
+    query: &str,
+    client: &PlaneClient,
+) -> Result<(String, String), PlaneError> {
+    if query.eq_ignore_ascii_case("me") {
+        let me = client.get_me().await?;
+        let name = me
+            .display_name
+            .clone()
+            .or_else(|| me.first_name.clone())
+            .unwrap_or_default();
+        return Ok((me.id, name));
+    }
+    let members = client.list_members().await?;
+    if is_uuid(query) {
+        if let Some(m) = members.iter().find(|m| m.id == query) {
+            return Ok((m.id.clone(), m.full_name()));
+        }
+        // Not present in the member list: accept the UUID as-is.
+        return Ok((query.to_string(), query.to_string()));
+    }
+    let with_names: Vec<(planebotcli_types::Member, String)> = members
+        .into_iter()
+        .map(|m| {
+            let name = m.full_name();
+            (m, name)
+        })
+        .collect();
+    if let Some(m) = find_best_match(query, &with_names, |(_, name)| name.as_str()) {
+        return Ok((m.item.0.id.clone(), m.item.1.clone()));
+    }
+    Err(PlaneError::NotFound {
+        message: format!("User not found: {query}"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

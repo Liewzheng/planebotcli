@@ -1,4 +1,4 @@
-//! planebotcli binary entry (also installed as `pbot`).
+//! `pbot` binary — thin alias entry sharing `planebotcli_cli`.
 
 use clap::Parser;
 use planebotcli_cli::{Cli, run};

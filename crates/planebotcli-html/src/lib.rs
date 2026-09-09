@@ -92,6 +92,13 @@ pub fn body_to_html(body: &str) -> String {
     result
 }
 
+/// Strip HTML tags from a fragment, leaving text (no entity decoding) —
+/// matches the Python `description_stripped` derivation.
+pub fn strip_html_tags(input: &str) -> String {
+    let tag = Regex::new(r"<[^>]+>").unwrap();
+    tag.replace_all(input, "").to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

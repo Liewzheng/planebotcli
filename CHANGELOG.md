@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.2] - 2026-09-09
+
+### Added
+- `doc create` / `doc update` accept **native markdown** (`--content-md`, converted
+  to HTML with headings/lists/code/links) and **raw HTML** (`--content-html`, stored
+  verbatim for rich layout). `--content` (plain text) stays; the three are mutually
+  exclusive. Previously pasting markdown or HTML through `--content` rendered
+  literally, producing poorly formatted pages.
+
 ## [1.0.1] - 2026-09-09
 
 ### Fixed

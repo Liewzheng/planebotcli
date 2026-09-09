@@ -6,7 +6,10 @@
 //! workspace slug from the config. Authentication is the `X-Api-Key` header.
 
 use planebotcli_core::{Config, PlaneError};
-use planebotcli_types::{Project, User};
+use planebotcli_types::{
+    Comment, CommentWrite, Label, LabelWrite, Member, Project, ProjectWrite, State, StateWrite,
+    User, WorkItem, WorkItemWrite,
+};
 use serde::de::DeserializeOwned;
 
 pub struct PlaneClient {
@@ -41,6 +44,7 @@ impl PlaneClient {
         method: reqwest::Method,
         path: &str,
         query: &[(&str, String)],
+        body: Option<&serde_json::Value>,
     ) -> Result<T, PlaneError> {
         let url = format!("{}{}", self.base_url, path);
         let mut attempts = 0;
@@ -54,12 +58,20 @@ impl PlaneClient {
             for (k, v) in query {
                 req = req.query(&[(k, v)]);
             }
+            if let Some(b) = body {
+                req = req.json(b);
+            }
             let resp = req.send().await.map_err(|e| PlaneError::Api {
                 message: format!("request to {path} failed: {e}"),
             })?;
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
             if status.is_success() {
+                if text.trim().is_empty() {
+                    return serde_json::from_str("null").map_err(|e| PlaneError::Api {
+                        message: format!("empty response from {path}: {e}"),
+                    });
+                }
                 return serde_json::from_str(&text).map_err(|e| PlaneError::Api {
                     message: format!("invalid JSON from {path}: {e}"),
                 });
@@ -74,10 +86,38 @@ impl PlaneClient {
         }
     }
 
+    /// Follow cursor pagination until exhausted, collecting all results.
+    async fn paginate<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, PlaneError> {
+        let mut all = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let mut query: Vec<(&str, String)> = vec![("limit", "50".to_string())];
+            if let Some(c) = &cursor {
+                query.push(("cursor", c.clone()));
+            }
+            let page: Page<T> = self
+                .request_json(reqwest::Method::GET, path, &query, None)
+                .await?;
+            let had_more = page.next_page_results;
+            all.extend(page.results);
+            match page.next_cursor {
+                Some(c) if had_more => cursor = Some(c),
+                _ => break,
+            }
+        }
+        Ok(all)
+    }
+
     /// `GET /api/v1/users/me/` — the current authenticated user.
     pub async fn get_me(&self) -> Result<User, PlaneError> {
-        self.request_json(reqwest::Method::GET, "/api/v1/users/me/", &[])
+        self.request_json(reqwest::Method::GET, "/api/v1/users/me/", &[], None)
             .await
+    }
+
+    /// `GET /api/v1/workspaces/{ws}/members/`
+    pub async fn list_members(&self) -> Result<Vec<Member>, PlaneError> {
+        let path = format!("/api/v1/workspaces/{}/members/", self.workspace);
+        self.paginate(&path).await
     }
 
     /// `GET /api/v1/workspaces/{ws}/projects/{id}/`
@@ -86,29 +126,241 @@ impl PlaneClient {
             "/api/v1/workspaces/{}/projects/{}/",
             self.workspace, project_id
         );
-        self.request_json(reqwest::Method::GET, &path, &[]).await
+        self.request_json(reqwest::Method::GET, &path, &[], None).await
     }
 
     /// `GET /api/v1/workspaces/{ws}/projects/` — paginated (cursor-based).
     pub async fn list_projects(&self) -> Result<Vec<Project>, PlaneError> {
-        let mut all = Vec::new();
-        let mut cursor: Option<String> = None;
-        loop {
-            let mut query: Vec<(&str, String)> = vec![("limit", "50".to_string())];
-            if let Some(c) = &cursor {
-                query.push(("cursor", c.clone()));
-            }
-            let path = format!("/api/v1/workspaces/{}/projects/", self.workspace);
-            let page: Page<Project> = self
-                .request_json(reqwest::Method::GET, &path, &query)
-                .await?;
-            all.extend(page.results);
-            match page.next_cursor {
-                Some(c) if page.next_page_results => cursor = Some(c),
-                _ => break,
-            }
+        let path = format!("/api/v1/workspaces/{}/projects/", self.workspace);
+        self.paginate(&path).await
+    }
+
+    /// `POST /api/v1/workspaces/{ws}/projects/`
+    pub async fn create_project(&self, body: &ProjectWrite) -> Result<Project, PlaneError> {
+        let path = format!("/api/v1/workspaces/{}/projects/", self.workspace);
+        self.request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await
+    }
+
+    /// `PATCH /api/v1/workspaces/{ws}/projects/{id}/`
+    pub async fn update_project(
+        &self,
+        project_id: &str,
+        body: &ProjectWrite,
+    ) -> Result<Project, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/",
+            self.workspace, project_id
+        );
+        self.request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
+            .await
+    }
+
+    /// `DELETE /api/v1/workspaces/{ws}/projects/{id}/`
+    pub async fn delete_project(&self, project_id: &str) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/",
+            self.workspace, project_id
+        );
+        let _: serde_json::Value =
+            self.request_json(reqwest::Method::DELETE, &path, &[], None).await?;
+        Ok(())
+    }
+
+    /// `GET /api/v1/workspaces/{ws}/projects/{pid}/labels/`
+    pub async fn list_labels(&self, project_id: &str) -> Result<Vec<Label>, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/labels/",
+            self.workspace, project_id
+        );
+        self.paginate(&path).await
+    }
+
+    /// `POST /api/v1/workspaces/{ws}/projects/{pid}/labels/`
+    pub async fn create_label(&self, project_id: &str, body: &LabelWrite) -> Result<Label, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/labels/",
+            self.workspace, project_id
+        );
+        self.request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await
+    }
+
+    /// `GET /api/v1/workspaces/{ws}/projects/{pid}/states/`
+    pub async fn list_states(&self, project_id: &str) -> Result<Vec<State>, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/states/",
+            self.workspace, project_id
+        );
+        self.paginate(&path).await
+    }
+
+    /// `POST /api/v1/workspaces/{ws}/projects/{pid}/states/`
+    pub async fn create_state(&self, project_id: &str, body: &StateWrite) -> Result<State, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/states/",
+            self.workspace, project_id
+        );
+        self.request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await
+    }
+
+    /// `GET /api/v1/workspaces/{ws}/projects/{pid}/work-items/` — all pages.
+    pub async fn list_work_items(&self, project_id: &str) -> Result<Vec<WorkItem>, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/work-items/",
+            self.workspace, project_id
+        );
+        self.paginate(&path).await
+    }
+
+    /// `GET /api/v1/workspaces/{ws}/projects/{pid}/work-items/{id}/?expand=estimate_point`
+    pub async fn get_work_item(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+    ) -> Result<WorkItem, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/work-items/{}",
+            self.workspace, project_id, work_item_id
+        );
+        let expand = [("expand", "estimate_point".to_string())];
+        self.request_json(reqwest::Method::GET, &path, &expand, None).await
+    }
+
+    /// `POST /api/v1/workspaces/{ws}/projects/{pid}/work-items/`
+    pub async fn create_work_item(
+        &self,
+        project_id: &str,
+        body: &WorkItemWrite,
+    ) -> Result<WorkItem, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/work-items/",
+            self.workspace, project_id
+        );
+        self.request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await
+    }
+
+    /// `PATCH /api/v1/workspaces/{ws}/projects/{pid}/work-items/{id}/`
+    pub async fn update_work_item(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+        body: &WorkItemWrite,
+    ) -> Result<WorkItem, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/work-items/{}",
+            self.workspace, project_id, work_item_id
+        );
+        self.request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
+            .await
+    }
+
+    /// `DELETE /api/v1/workspaces/{ws}/projects/{pid}/work-items/{id}/`
+    pub async fn delete_work_item(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+    ) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/work-items/{}",
+            self.workspace, project_id, work_item_id
+        );
+        let _: serde_json::Value =
+            self.request_json(reqwest::Method::DELETE, &path, &[], None).await?;
+        Ok(())
+    }
+
+    /// `GET /api/v1/workspaces/{ws}/work-items/search/?query=...`
+    pub async fn search_work_items(&self, query: &str) -> Result<Vec<WorkItem>, PlaneError> {
+        let path = format!("/api/v1/workspaces/{}/work-items/search/", self.workspace);
+        let q = [("query", query.to_string())];
+        self.request_json(reqwest::Method::GET, &path, &q, None).await
+    }
+
+    /// `GET .../work-items/{id}/comments/`
+    pub async fn list_comments(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+    ) -> Result<Vec<Comment>, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/work-items/{}/comments/",
+            self.workspace, project_id, work_item_id
+        );
+        self.paginate(&path).await
+    }
+
+    /// `POST .../work-items/{id}/comments/`
+    pub async fn create_comment(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+        body: &CommentWrite,
+    ) -> Result<Comment, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/work-items/{}/comments/",
+            self.workspace, project_id, work_item_id
+        );
+        self.request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await
+    }
+
+    /// `PATCH .../comments/{id}/`
+    pub async fn update_comment(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+        comment_id: &str,
+        body: &CommentWrite,
+    ) -> Result<Comment, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/work-items/{}/comments/{}",
+            self.workspace, project_id, work_item_id, comment_id
+        );
+        self.request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
+            .await
+    }
+
+    /// `DELETE .../comments/{id}/`
+    pub async fn delete_comment(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+        comment_id: &str,
+    ) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/work-items/{}/comments/{}",
+            self.workspace, project_id, work_item_id, comment_id
+        );
+        let _: serde_json::Value =
+            self.request_json(reqwest::Method::DELETE, &path, &[], None).await?;
+        Ok(())
+    }
+}
+
+/// Serialize a request body, dropping `null` fields so PATCH bodies only carry
+/// the fields the caller actually set (the Python SDK used exclude_none=True).
+fn body_json<T: serde::Serialize>(value: &T) -> Result<serde_json::Value, PlaneError> {
+    let value = serde_json::to_value(value).map_err(|e| PlaneError::Api {
+        message: format!("failed to serialize request body: {e}"),
+    })?;
+    Ok(strip_nulls(value))
+}
+
+fn strip_nulls(value: serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => serde_json::Value::Object(
+            map.into_iter()
+                .filter(|(_, v)| !v.is_null())
+                .map(|(k, v)| (k, strip_nulls(v)))
+                .collect(),
+        ),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.into_iter().map(strip_nulls).collect())
         }
-        Ok(all)
+        other => other,
     }
 }
 

@@ -13,7 +13,7 @@ from plane.errors import PlaneError
 from rich.text import Text
 
 from planecli.api.async_sdk import create_client, run_sdk
-from planecli.api.client import get_client, get_workspace, handle_api_error
+from planecli.api.client import get_client, get_config, get_workspace, handle_api_error
 from planecli.formatters import output, output_single
 from planecli.utils.colors import PRIORITY_COLORS, colorize, lighten_hex
 from planecli.utils.resolve import (
@@ -52,6 +52,7 @@ WI_FIELDS = [
     ("assignee_names", "Assignees"),
     ("label_names", "Labels"),
     ("estimate_display", "Estimate"),
+    ("web_url", "Web URL"),
     ("start_date", "Start Date"),
     ("target_date", "Target Date"),
     ("created_at", "Created"),
@@ -76,6 +77,20 @@ def _enrich_work_item(
         label_map: Optional UUID->{"name": str, "color": str|None} mapping for labels.
         project_identifier: Optional project identifier (e.g. "CHATFIN") for sequence IDs.
     """
+    # Web URL - build a browsable link when both UUIDs and config are available
+    issue_id = data.get("id")
+    project_id = data.get("project")
+    if issue_id and project_id:
+        base_url = ""
+        workspace = ""
+        try:
+            base_url = get_config().base_url.rstrip("/")
+            workspace = get_workspace()
+        except Exception:  # Config unavailable - leave web_url unset
+            pass
+        if base_url and workspace:
+            data["web_url"] = f"{base_url}/{workspace}/projects/{project_id}/issues/{issue_id}/"
+
     # Add sequence_id like CHATFIN-30
     if not project_identifier:
         project_detail = data.get("project_detail")

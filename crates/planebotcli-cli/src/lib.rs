@@ -14,8 +14,8 @@ use planebotcli_resolve::{
     locate_work_item_across, locate_work_item_in_project, resolve_project, resolve_user_query,
 };
 use planebotcli_types::{
-    CommentWrite, Label, LabelWrite, Project, ProjectWrite, State, StateWrite, WorkItem,
-    WorkItemWrite,
+    CommentWrite, Cycle, CycleWrite, Label, LabelWrite, Module, ModuleWrite, Project, ProjectWrite,
+    State, StateWrite, WorkItem, WorkItemWrite,
 };
 use render::{Lookups, comment_json, work_item_view};
 use serde_json::Value;
@@ -72,6 +72,16 @@ pub enum Command {
     State {
         #[command(subcommand)]
         command: StateCmd,
+    },
+    /// Manage modules.
+    Module {
+        #[command(subcommand)]
+        command: ModuleCmd,
+    },
+    /// Manage cycles (sprints).
+    Cycle {
+        #[command(subcommand)]
+        command: CycleCmd,
     },
     /// Workspace members.
     User {
@@ -297,6 +307,159 @@ pub enum StateCmd {
     Delete {
         /// State name or UUID.
         state: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ModuleCmd {
+    /// List modules in a project.
+    #[command(alias = "ls")]
+    List {
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Show module details.
+    Show {
+        /// Module name or UUID.
+        module: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Create a new module.
+    Create {
+        /// Module name.
+        name: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Module description.
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+        /// Start date (YYYY-MM-DD).
+        #[arg(long)]
+        start_date: Option<String>,
+        /// End date (YYYY-MM-DD).
+        #[arg(long)]
+        end_date: Option<String>,
+        /// Status: backlog, planned, in-progress, paused, completed, cancelled.
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Update a module.
+    Update {
+        /// Module name or UUID.
+        module: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// New module name.
+        #[arg(long)]
+        name: Option<String>,
+        /// New description.
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+        /// New status: backlog, planned, in-progress, paused, completed, cancelled.
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Delete a module.
+    Delete {
+        /// Module name or UUID.
+        module: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum CycleCmd {
+    /// List cycles in a project.
+    #[command(alias = "ls")]
+    List {
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Show cycle details.
+    Show {
+        /// Cycle name or UUID.
+        cycle: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Create a new cycle.
+    Create {
+        /// Cycle name.
+        name: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Cycle description.
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+        /// Start date (YYYY-MM-DD).
+        #[arg(long)]
+        start_date: Option<String>,
+        /// End date (YYYY-MM-DD).
+        #[arg(long)]
+        end_date: Option<String>,
+    },
+    /// Update a cycle.
+    Update {
+        /// Cycle name or UUID.
+        cycle: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// New cycle name.
+        #[arg(long)]
+        name: Option<String>,
+        /// New start date (YYYY-MM-DD).
+        #[arg(long)]
+        start_date: Option<String>,
+        /// New end date (YYYY-MM-DD).
+        #[arg(long)]
+        end_date: Option<String>,
+    },
+    /// Delete a cycle.
+    Delete {
+        /// Cycle name or UUID.
+        cycle: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Add a work item to a cycle.
+    AddItem {
+        /// Cycle name or UUID.
+        cycle: String,
+        /// Work item identifier (ABC-123), UUID, or name.
+        work_item: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Remove a work item from a cycle.
+    RemoveItem {
+        /// Cycle name or UUID.
+        cycle: String,
+        /// Work item identifier (ABC-123), UUID, or name.
+        work_item: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// List work items in a cycle.
+    Items {
+        /// Cycle name or UUID.
+        cycle: String,
         /// Project name, identifier, or UUID (required).
         #[arg(long, short = 'p')]
         project: Option<String>,
@@ -726,6 +889,103 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
             }
             StateCmd::Delete { state, project } => {
                 cmd_state_delete(&client, &state, project.as_deref()).await
+            }
+        },
+        Command::Module { command } => match command {
+            ModuleCmd::List { project } => {
+                cmd_module_list(&client, project.as_deref(), cli.json).await
+            }
+            ModuleCmd::Show { module, project } => {
+                cmd_module_show(&client, &module, project.as_deref(), cli.json).await
+            }
+            ModuleCmd::Create {
+                name,
+                project,
+                description,
+                start_date,
+                end_date,
+                status,
+            } => {
+                let opts = ModuleCreateOpts {
+                    project: project.as_deref(),
+                    description: description.as_deref(),
+                    start_date: start_date.as_deref(),
+                    end_date: end_date.as_deref(),
+                    status: status.as_deref(),
+                };
+                cmd_module_create(&client, &name, &opts, cli.json).await
+            }
+            ModuleCmd::Update {
+                module,
+                project,
+                name,
+                description,
+                status,
+            } => {
+                let opts = ModuleUpdateOpts {
+                    project: project.as_deref(),
+                    name: name.as_deref(),
+                    description: description.as_deref(),
+                    status: status.as_deref(),
+                };
+                cmd_module_update(&client, &module, &opts, cli.json).await
+            }
+            ModuleCmd::Delete { module, project } => {
+                cmd_module_delete(&client, &module, project.as_deref()).await
+            }
+        },
+        Command::Cycle { command } => match command {
+            CycleCmd::List { project } => {
+                cmd_cycle_list(&client, project.as_deref(), cli.json).await
+            }
+            CycleCmd::Show { cycle, project } => {
+                cmd_cycle_show(&client, &cycle, project.as_deref(), cli.json).await
+            }
+            CycleCmd::Create {
+                name,
+                project,
+                description,
+                start_date,
+                end_date,
+            } => {
+                let opts = CycleCreateOpts {
+                    project: project.as_deref(),
+                    description: description.as_deref(),
+                    start_date: start_date.as_deref(),
+                    end_date: end_date.as_deref(),
+                };
+                cmd_cycle_create(&client, &name, &opts, cli.json).await
+            }
+            CycleCmd::Update {
+                cycle,
+                project,
+                name,
+                start_date,
+                end_date,
+            } => {
+                let opts = CycleUpdateOpts {
+                    project: project.as_deref(),
+                    name: name.as_deref(),
+                    start_date: start_date.as_deref(),
+                    end_date: end_date.as_deref(),
+                };
+                cmd_cycle_update(&client, &cycle, &opts, cli.json).await
+            }
+            CycleCmd::Delete { cycle, project } => {
+                cmd_cycle_delete(&client, &cycle, project.as_deref()).await
+            }
+            CycleCmd::AddItem {
+                cycle,
+                work_item,
+                project,
+            } => cmd_cycle_add_item(&client, &cycle, &work_item, project.as_deref()).await,
+            CycleCmd::RemoveItem {
+                cycle,
+                work_item,
+                project,
+            } => cmd_cycle_remove_item(&client, &cycle, &work_item, project.as_deref()).await,
+            CycleCmd::Items { cycle, project } => {
+                cmd_cycle_items(&client, &cfg.base_url, &cycle, project.as_deref(), cli.json).await
             }
         },
         Command::User { command } => match command {
@@ -2181,6 +2441,545 @@ async fn cmd_state_delete(
     let name = found.name.clone().unwrap_or_else(|| found.id.clone());
     client.delete_state(&proj.id, &found.id).await?;
     eprintln!("State '{name}' deleted.");
+    Ok(())
+}
+
+/// Options for `module create` (grouped to keep the handler signature small).
+struct ModuleCreateOpts<'a> {
+    project: Option<&'a str>,
+    description: Option<&'a str>,
+    start_date: Option<&'a str>,
+    end_date: Option<&'a str>,
+    status: Option<&'a str>,
+}
+
+/// Options for `module update`.
+struct ModuleUpdateOpts<'a> {
+    project: Option<&'a str>,
+    name: Option<&'a str>,
+    description: Option<&'a str>,
+    status: Option<&'a str>,
+}
+
+/// Options for `cycle create`.
+struct CycleCreateOpts<'a> {
+    project: Option<&'a str>,
+    description: Option<&'a str>,
+    start_date: Option<&'a str>,
+    end_date: Option<&'a str>,
+}
+
+/// Options for `cycle update`.
+struct CycleUpdateOpts<'a> {
+    project: Option<&'a str>,
+    name: Option<&'a str>,
+    start_date: Option<&'a str>,
+    end_date: Option<&'a str>,
+}
+
+/// Valid module status values (Plane's ModuleStatusEnum).
+const MODULE_STATUSES: [&str; 6] = [
+    "backlog",
+    "planned",
+    "in-progress",
+    "paused",
+    "completed",
+    "cancelled",
+];
+
+/// Normalize and validate a `--status` flag. Accepts the same aliases as the
+/// Python CLI (English plus Portuguese spellings); error lists valid values.
+fn normalize_module_status(value: Option<&str>) -> Result<Option<String>, PlaneError> {
+    let Some(value) = value else { return Ok(None) };
+    let trimmed = value.trim().to_lowercase();
+    let canonical = match trimmed.as_str() {
+        "backlog" => "backlog",
+        "planned" | "planejado" => "planned",
+        "in-progress" | "in progress" | "in_progress" | "inprogress" | "em andamento" => {
+            "in-progress"
+        }
+        "paused" | "pausado" => "paused",
+        "completed" | "concluido" | "concluído" => "completed",
+        "cancelled" | "canceled" | "cancelado" => "cancelled",
+        _ => {
+            return Err(PlaneError::Validation {
+                message: format!("Invalid status '{value}'."),
+                hint: Some(format!("Valid values: {}.", MODULE_STATUSES.join(", "))),
+            });
+        }
+    };
+    Ok(Some(canonical.to_string()))
+}
+
+/// Resolve a module by UUID or fuzzy name against a project's modules.
+async fn resolve_module(
+    client: &PlaneClient,
+    project_id: &str,
+    query: &str,
+) -> Result<Module, PlaneError> {
+    if planebotcli_resolve::is_uuid(query) {
+        return client
+            .get_module(project_id, query)
+            .await
+            .map_err(|e| match e {
+                PlaneError::NotFound { .. } => PlaneError::NotFound {
+                    message: format!("Module not found: {query}"),
+                },
+                other => other,
+            });
+    }
+    let modules = client.list_modules(project_id).await?;
+    let found =
+        planebotcli_resolve::find_best_match(query, &modules, |m| m.name.as_deref().unwrap_or(""));
+    match found {
+        Some(m) => Ok(m.item.clone()),
+        None => Err(PlaneError::NotFound {
+            message: format!("Module not found: {query}"),
+        }),
+    }
+}
+
+/// Resolve a cycle by UUID or fuzzy name against a project's cycles.
+async fn resolve_cycle(
+    client: &PlaneClient,
+    project_id: &str,
+    query: &str,
+) -> Result<Cycle, PlaneError> {
+    if planebotcli_resolve::is_uuid(query) {
+        return client
+            .get_cycle(project_id, query)
+            .await
+            .map_err(|e| match e {
+                PlaneError::NotFound { .. } => PlaneError::NotFound {
+                    message: format!("Cycle not found: {query}"),
+                },
+                other => other,
+            });
+    }
+    let cycles = client.list_cycles(project_id).await?;
+    let found =
+        planebotcli_resolve::find_best_match(query, &cycles, |c| c.name.as_deref().unwrap_or(""));
+    match found {
+        Some(c) => Ok(c.item.clone()),
+        None => Err(PlaneError::NotFound {
+            message: format!("Cycle not found: {query}"),
+        }),
+    }
+}
+
+/// Print a single module: JSON to stdout, or a Field/Value table to stderr.
+fn output_module_view(module: &Module, json: bool) {
+    if json {
+        output_json(module);
+        return;
+    }
+    let rows = vec![
+        vec!["id".to_string(), module.id.clone()],
+        vec!["name".to_string(), module.name.clone().unwrap_or_default()],
+        vec![
+            "description".to_string(),
+            module.description.clone().unwrap_or_default(),
+        ],
+        vec![
+            "status".to_string(),
+            module.status.clone().unwrap_or_default(),
+        ],
+        vec![
+            "start_date".to_string(),
+            module.start_date.clone().unwrap_or_default(),
+        ],
+        vec![
+            "target_date".to_string(),
+            module.target_date.clone().unwrap_or_default(),
+        ],
+        vec![
+            "created_at".to_string(),
+            module.created_at.clone().unwrap_or_default(),
+        ],
+        vec![
+            "updated_at".to_string(),
+            module.updated_at.clone().unwrap_or_default(),
+        ],
+    ];
+    output_table(&["Field", "Value"], &rows);
+}
+
+/// Print a single cycle: JSON to stdout, or a Field/Value table to stderr.
+fn output_cycle_view(cycle: &Cycle, json: bool) {
+    if json {
+        output_json(cycle);
+        return;
+    }
+    let count = |v: &Option<i64>| v.map(|n| n.to_string()).unwrap_or_default();
+    let rows = vec![
+        vec!["id".to_string(), cycle.id.clone()],
+        vec!["name".to_string(), cycle.name.clone().unwrap_or_default()],
+        vec![
+            "description".to_string(),
+            cycle.description.clone().unwrap_or_default(),
+        ],
+        vec![
+            "start_date".to_string(),
+            cycle.start_date.clone().unwrap_or_default(),
+        ],
+        vec![
+            "end_date".to_string(),
+            cycle.end_date.clone().unwrap_or_default(),
+        ],
+        vec![
+            "owned_by".to_string(),
+            cycle.owned_by.clone().unwrap_or_default(),
+        ],
+        vec!["total_issues".to_string(), count(&cycle.total_issues)],
+        vec![
+            "completed_issues".to_string(),
+            count(&cycle.completed_issues),
+        ],
+        vec!["started_issues".to_string(), count(&cycle.started_issues)],
+        vec![
+            "unstarted_issues".to_string(),
+            count(&cycle.unstarted_issues),
+        ],
+        vec!["backlog_issues".to_string(), count(&cycle.backlog_issues)],
+        vec![
+            "cancelled_issues".to_string(),
+            count(&cycle.cancelled_issues),
+        ],
+        vec![
+            "created_at".to_string(),
+            cycle.created_at.clone().unwrap_or_default(),
+        ],
+        vec![
+            "updated_at".to_string(),
+            cycle.updated_at.clone().unwrap_or_default(),
+        ],
+    ];
+    output_table(&["Field", "Value"], &rows);
+}
+
+async fn cmd_module_list(
+    client: &PlaneClient,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let mut modules = client.list_modules(&proj.id).await?;
+    // Newest first, mirroring the Python list default sort.
+    modules.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    if json {
+        output_json(&modules);
+    } else {
+        let rows: Vec<Vec<String>> = modules
+            .iter()
+            .map(|m| {
+                vec![
+                    m.id.clone(),
+                    m.name.clone().unwrap_or_default(),
+                    m.status.clone().unwrap_or_default(),
+                    m.start_date.clone().unwrap_or_default(),
+                    m.target_date.clone().unwrap_or_default(),
+                ]
+            })
+            .collect();
+        output_table(&["ID", "Name", "Status", "Start", "End"], &rows);
+    }
+    Ok(())
+}
+
+async fn cmd_module_show(
+    client: &PlaneClient,
+    module: &str,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let module = resolve_module(client, &proj.id, module).await?;
+    output_module_view(&module, json);
+    Ok(())
+}
+
+async fn cmd_module_create(
+    client: &PlaneClient,
+    name: &str,
+    opts: &ModuleCreateOpts<'_>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    // Validate flags before touching the network (Python normalizes status first).
+    let start_date = validate_date(opts.start_date, "--start-date")?;
+    let end_date = validate_date(opts.end_date, "--end-date")?;
+    let status = normalize_module_status(opts.status)?;
+    let proj = require_project(client, opts.project).await?;
+    let mut write = ModuleWrite {
+        name: Some(name.to_string()),
+        ..Default::default()
+    };
+    if let Some(description) = opts.description {
+        write.description = Some(description.to_string());
+    }
+    if let Some(d) = start_date {
+        write.start_date = Some(d);
+    }
+    // The API stores the end date under target_date.
+    if let Some(d) = end_date {
+        write.target_date = Some(d);
+    }
+    if let Some(s) = status {
+        write.status = Some(s);
+    }
+    let created = client.create_module(&proj.id, &write).await?;
+    output_module_view(&created, json);
+    Ok(())
+}
+
+async fn cmd_module_update(
+    client: &PlaneClient,
+    module: &str,
+    opts: &ModuleUpdateOpts<'_>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    // Validate flags before touching the network (Python normalizes status first).
+    let status = normalize_module_status(opts.status)?;
+    let proj = require_project(client, opts.project).await?;
+    let found = resolve_module(client, &proj.id, module).await?;
+    let mut write = ModuleWrite::default();
+    if let Some(name) = opts.name {
+        write.name = Some(name.to_string());
+    }
+    if let Some(description) = opts.description {
+        write.description = Some(description.to_string());
+    }
+    if let Some(s) = status {
+        write.status = Some(s);
+    }
+    let updated = client.update_module(&proj.id, &found.id, &write).await?;
+    output_module_view(&updated, json);
+    Ok(())
+}
+
+async fn cmd_module_delete(
+    client: &PlaneClient,
+    module: &str,
+    project: Option<&str>,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let found = resolve_module(client, &proj.id, module).await?;
+    let name = found.name.clone().unwrap_or_else(|| found.id.clone());
+    client.delete_module(&proj.id, &found.id).await?;
+    eprintln!("Module '{name}' deleted.");
+    Ok(())
+}
+
+async fn cmd_cycle_list(
+    client: &PlaneClient,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let mut cycles = client.list_cycles(&proj.id).await?;
+    // Newest first, mirroring the Python list default sort.
+    cycles.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    if json {
+        output_json(&cycles);
+    } else {
+        let count = |v: &Option<i64>| v.map(|n| n.to_string()).unwrap_or_default();
+        let rows: Vec<Vec<String>> = cycles
+            .iter()
+            .map(|c| {
+                vec![
+                    c.id.clone(),
+                    c.name.clone().unwrap_or_default(),
+                    c.start_date.clone().unwrap_or_default(),
+                    c.end_date.clone().unwrap_or_default(),
+                    count(&c.total_issues),
+                    count(&c.completed_issues),
+                ]
+            })
+            .collect();
+        output_table(&["ID", "Name", "Start", "End", "Issues", "Done"], &rows);
+    }
+    Ok(())
+}
+
+async fn cmd_cycle_show(
+    client: &PlaneClient,
+    cycle: &str,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let cycle = resolve_cycle(client, &proj.id, cycle).await?;
+    output_cycle_view(&cycle, json);
+    Ok(())
+}
+
+async fn cmd_cycle_create(
+    client: &PlaneClient,
+    name: &str,
+    opts: &CycleCreateOpts<'_>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let start_date = validate_date(opts.start_date, "--start-date")?;
+    let end_date = validate_date(opts.end_date, "--end-date")?;
+    let proj = require_project(client, opts.project).await?;
+    // Cycles are owned by the authenticated user on create (like the Python
+    // SDK's CreateCycle, which requires owned_by).
+    let me = client.get_me().await?;
+    let mut write = CycleWrite {
+        name: Some(name.to_string()),
+        owned_by: Some(me.id),
+        project_id: Some(proj.id.clone()),
+        ..Default::default()
+    };
+    if let Some(description) = opts.description {
+        write.description = Some(description.to_string());
+    }
+    if let Some(d) = start_date {
+        write.start_date = Some(d);
+    }
+    if let Some(d) = end_date {
+        write.end_date = Some(d);
+    }
+    let created = client.create_cycle(&proj.id, &write).await?;
+    output_cycle_view(&created, json);
+    Ok(())
+}
+
+async fn cmd_cycle_update(
+    client: &PlaneClient,
+    cycle: &str,
+    opts: &CycleUpdateOpts<'_>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let start_date = validate_date(opts.start_date, "--start-date")?;
+    let end_date = validate_date(opts.end_date, "--end-date")?;
+    let proj = require_project(client, opts.project).await?;
+    let found = resolve_cycle(client, &proj.id, cycle).await?;
+    let mut write = CycleWrite::default();
+    if let Some(name) = opts.name {
+        write.name = Some(name.to_string());
+    }
+    if let Some(d) = start_date {
+        write.start_date = Some(d);
+    }
+    if let Some(d) = end_date {
+        write.end_date = Some(d);
+    }
+    let updated = client.update_cycle(&proj.id, &found.id, &write).await?;
+    output_cycle_view(&updated, json);
+    Ok(())
+}
+
+async fn cmd_cycle_delete(
+    client: &PlaneClient,
+    cycle: &str,
+    project: Option<&str>,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let found = resolve_cycle(client, &proj.id, cycle).await?;
+    let name = found.name.clone().unwrap_or_else(|| found.id.clone());
+    client.delete_cycle(&proj.id, &found.id).await?;
+    eprintln!("Cycle '{name}' deleted.");
+    Ok(())
+}
+
+async fn cmd_cycle_add_item(
+    client: &PlaneClient,
+    cycle: &str,
+    work_item: &str,
+    project: Option<&str>,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let found_cycle = resolve_cycle(client, &proj.id, cycle).await?;
+    let located = locate_work_item_in_project(work_item, &proj, client).await?;
+    client
+        .add_work_item_to_cycle(&proj.id, &found_cycle.id, &located.item.id)
+        .await?;
+    let name = found_cycle
+        .name
+        .clone()
+        .unwrap_or_else(|| found_cycle.id.clone());
+    eprintln!("Work item added to cycle '{name}'.");
+    Ok(())
+}
+
+async fn cmd_cycle_remove_item(
+    client: &PlaneClient,
+    cycle: &str,
+    work_item: &str,
+    project: Option<&str>,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let found_cycle = resolve_cycle(client, &proj.id, cycle).await?;
+    let located = locate_work_item_in_project(work_item, &proj, client).await?;
+    client
+        .remove_work_item_from_cycle(&proj.id, &found_cycle.id, &located.item.id)
+        .await?;
+    let name = found_cycle
+        .name
+        .clone()
+        .unwrap_or_else(|| found_cycle.id.clone());
+    eprintln!("Work item removed from cycle '{name}'.");
+    Ok(())
+}
+
+async fn cmd_cycle_items(
+    client: &PlaneClient,
+    base_url: &str,
+    cycle: &str,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let found_cycle = resolve_cycle(client, &proj.id, cycle).await?;
+    let workspace = client.workspace().to_string();
+    let identifier = proj.identifier.clone().unwrap_or_default();
+
+    let items = client
+        .list_cycle_work_items(&proj.id, &found_cycle.id)
+        .await?;
+    let states = client.list_states(&proj.id).await?;
+    let labels_list = client.list_labels(&proj.id).await?;
+    let members = client.list_members().await?;
+    let state_map: HashMap<String, String> = states
+        .into_iter()
+        .map(|s| (s.id, s.name.unwrap_or_default()))
+        .collect();
+    let label_map: HashMap<String, String> = labels_list
+        .into_iter()
+        .map(|l| (l.id, l.name.unwrap_or_default()))
+        .collect();
+    let member_map: HashMap<String, String> = members
+        .into_iter()
+        .map(|m| {
+            let name = m.full_name();
+            (m.id, name)
+        })
+        .collect();
+    let lookups = Lookups {
+        state_map,
+        label_map,
+        member_map,
+    };
+    let views: Vec<Value> = items
+        .iter()
+        .map(|item| work_item_view(item, &identifier, &lookups, base_url, &workspace))
+        .collect();
+    if json {
+        output_json(&views);
+    } else {
+        let rows: Vec<Vec<String>> = views
+            .iter()
+            .map(|v| {
+                vec![
+                    v["sequence_id"].as_str().unwrap_or("").to_string(),
+                    v["name"].as_str().unwrap_or("").to_string(),
+                    v["priority"].as_str().unwrap_or("").to_string(),
+                    v["state_detail_name"].as_str().unwrap_or("").to_string(),
+                ]
+            })
+            .collect();
+        output_table(&["ID", "Title", "Priority", "State"], &rows);
+    }
     Ok(())
 }
 

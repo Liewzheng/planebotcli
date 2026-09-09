@@ -8,8 +8,8 @@
 use planebotcli_cache::Cache;
 use planebotcli_core::{Config, PlaneError};
 use planebotcli_types::{
-    Comment, CommentWrite, Label, LabelWrite, Member, Project, ProjectWrite, State, StateWrite,
-    User, WorkItem, WorkItemWrite,
+    Comment, CommentWrite, Cycle, CycleWrite, Label, LabelWrite, Member, Module, ModuleWrite,
+    Project, ProjectWrite, State, StateWrite, User, WorkItem, WorkItemWrite,
 };
 use serde::de::DeserializeOwned;
 use std::time::Duration;
@@ -20,6 +20,8 @@ const TTL_PROJECTS: Duration = Duration::from_secs(60);
 const TTL_STATES: Duration = Duration::from_secs(120);
 const TTL_LABELS: Duration = Duration::from_secs(120);
 const TTL_WORK_ITEMS: Duration = Duration::from_secs(60);
+const TTL_MODULES: Duration = Duration::from_secs(300);
+const TTL_CYCLES: Duration = Duration::from_secs(300);
 
 pub struct PlaneClient {
     http: reqwest::Client,
@@ -498,6 +500,230 @@ impl PlaneClient {
             .request_json(reqwest::Method::DELETE, &path, &[], None)
             .await?;
         Ok(())
+    }
+
+    /// `GET .../projects/{pid}/modules/` — all pages (cached).
+    pub async fn list_modules(&self, project_id: &str) -> Result<Vec<Module>, PlaneError> {
+        let key = format!("modules:{}:{}", self.workspace, project_id);
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/modules/",
+            self.workspace, project_id
+        );
+        self.cached_list(&key, TTL_MODULES, async move { self.paginate(&path).await })
+            .await
+    }
+
+    /// `GET .../projects/{pid}/modules/{id}/`
+    pub async fn get_module(
+        &self,
+        project_id: &str,
+        module_id: &str,
+    ) -> Result<Module, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/modules/{}",
+            self.workspace, project_id, module_id
+        );
+        self.request_json(reqwest::Method::GET, &path, &[], None)
+            .await
+    }
+
+    /// `POST .../projects/{pid}/modules/`
+    pub async fn create_module(
+        &self,
+        project_id: &str,
+        body: &ModuleWrite,
+    ) -> Result<Module, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/modules/",
+            self.workspace, project_id
+        );
+        let result = self
+            .request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("modules:{}:{}", self.workspace, project_id));
+        result
+    }
+
+    /// `PATCH .../projects/{pid}/modules/{id}/`
+    pub async fn update_module(
+        &self,
+        project_id: &str,
+        module_id: &str,
+        body: &ModuleWrite,
+    ) -> Result<Module, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/modules/{}",
+            self.workspace, project_id, module_id
+        );
+        let result = self
+            .request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("modules:{}:{}", self.workspace, project_id));
+        result
+    }
+
+    /// `DELETE .../projects/{pid}/modules/{id}/`
+    pub async fn delete_module(&self, project_id: &str, module_id: &str) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/modules/{}",
+            self.workspace, project_id, module_id
+        );
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::DELETE, &path, &[], None)
+            .await?;
+        self.invalidate(&format!("modules:{}:{}", self.workspace, project_id));
+        Ok(())
+    }
+
+    /// `POST .../modules/{id}/module-issues/` — body `{"issues": [ids]}`.
+    pub async fn add_work_items_to_module(
+        &self,
+        project_id: &str,
+        module_id: &str,
+        work_item_ids: &[String],
+    ) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/modules/{}/module-issues",
+            self.workspace, project_id, module_id
+        );
+        let body = serde_json::json!({ "issues": work_item_ids });
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::POST, &path, &[], Some(&body))
+            .await?;
+        self.invalidate(&format!("modules:{}:{}", self.workspace, project_id));
+        Ok(())
+    }
+
+    /// `GET .../modules/{id}/module-issues/` — the module's work items.
+    pub async fn list_module_work_items(
+        &self,
+        project_id: &str,
+        module_id: &str,
+    ) -> Result<Vec<WorkItem>, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/modules/{}/module-issues",
+            self.workspace, project_id, module_id
+        );
+        self.paginate(&path).await
+    }
+
+    /// `GET .../projects/{pid}/cycles/` — all pages (cached).
+    pub async fn list_cycles(&self, project_id: &str) -> Result<Vec<Cycle>, PlaneError> {
+        let key = format!("cycles:{}:{}", self.workspace, project_id);
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/cycles/",
+            self.workspace, project_id
+        );
+        self.cached_list(&key, TTL_CYCLES, async move { self.paginate(&path).await })
+            .await
+    }
+
+    /// `GET .../projects/{pid}/cycles/{id}/`
+    pub async fn get_cycle(&self, project_id: &str, cycle_id: &str) -> Result<Cycle, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/cycles/{}",
+            self.workspace, project_id, cycle_id
+        );
+        self.request_json(reqwest::Method::GET, &path, &[], None)
+            .await
+    }
+
+    /// `POST .../projects/{pid}/cycles/`
+    pub async fn create_cycle(
+        &self,
+        project_id: &str,
+        body: &CycleWrite,
+    ) -> Result<Cycle, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/cycles/",
+            self.workspace, project_id
+        );
+        let result = self
+            .request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("cycles:{}:{}", self.workspace, project_id));
+        result
+    }
+
+    /// `PATCH .../projects/{pid}/cycles/{id}/`
+    pub async fn update_cycle(
+        &self,
+        project_id: &str,
+        cycle_id: &str,
+        body: &CycleWrite,
+    ) -> Result<Cycle, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/cycles/{}",
+            self.workspace, project_id, cycle_id
+        );
+        let result = self
+            .request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("cycles:{}:{}", self.workspace, project_id));
+        result
+    }
+
+    /// `DELETE .../projects/{pid}/cycles/{id}/`
+    pub async fn delete_cycle(&self, project_id: &str, cycle_id: &str) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/cycles/{}",
+            self.workspace, project_id, cycle_id
+        );
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::DELETE, &path, &[], None)
+            .await?;
+        self.invalidate(&format!("cycles:{}:{}", self.workspace, project_id));
+        Ok(())
+    }
+
+    /// `POST .../cycles/{id}/cycle-issues/` — body `{"issues": [id]}`.
+    pub async fn add_work_item_to_cycle(
+        &self,
+        project_id: &str,
+        cycle_id: &str,
+        work_item_id: &str,
+    ) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/cycles/{}/cycle-issues",
+            self.workspace, project_id, cycle_id
+        );
+        let body = serde_json::json!({ "issues": [work_item_id] });
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::POST, &path, &[], Some(&body))
+            .await?;
+        self.invalidate(&format!("cycles:{}:{}", self.workspace, project_id));
+        Ok(())
+    }
+
+    /// `DELETE .../cycles/{id}/cycle-issues/{work_item_id}/`
+    pub async fn remove_work_item_from_cycle(
+        &self,
+        project_id: &str,
+        cycle_id: &str,
+        work_item_id: &str,
+    ) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/cycles/{}/cycle-issues/{}",
+            self.workspace, project_id, cycle_id, work_item_id
+        );
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::DELETE, &path, &[], None)
+            .await?;
+        self.invalidate(&format!("cycles:{}:{}", self.workspace, project_id));
+        Ok(())
+    }
+
+    /// `GET .../cycles/{id}/cycle-issues/` — the cycle's work items.
+    pub async fn list_cycle_work_items(
+        &self,
+        project_id: &str,
+        cycle_id: &str,
+    ) -> Result<Vec<WorkItem>, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/cycles/{}/cycle-issues",
+            self.workspace, project_id, cycle_id
+        );
+        self.paginate(&path).await
     }
 }
 

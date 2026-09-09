@@ -114,6 +114,87 @@ pub struct StateWrite {
     pub description: Option<String>,
 }
 
+/// A module as returned by the modules endpoints.
+///
+/// The API exposes the end date under `target_date` (not `end_date`), which is
+/// the field name the write DTO and the CLI both use.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Module {
+    pub id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    /// backlog | planned | in-progress | paused | completed | cancelled
+    pub status: Option<String>,
+    #[serde(rename = "start_date")]
+    pub start_date: Option<String>,
+    #[serde(rename = "target_date")]
+    pub target_date: Option<String>,
+    #[serde(rename = "created_at")]
+    pub created_at: Option<String>,
+    #[serde(rename = "updated_at")]
+    pub updated_at: Option<String>,
+}
+
+/// Request body for module create/update.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct ModuleWrite {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub status: Option<String>,
+    #[serde(rename = "start_date")]
+    pub start_date: Option<String>,
+    #[serde(rename = "target_date")]
+    pub target_date: Option<String>,
+}
+
+/// A cycle as returned by the cycles endpoints.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Cycle {
+    pub id: String,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    #[serde(rename = "start_date")]
+    pub start_date: Option<String>,
+    #[serde(rename = "end_date")]
+    pub end_date: Option<String>,
+    #[serde(rename = "owned_by")]
+    pub owned_by: Option<String>,
+    #[serde(rename = "total_issues")]
+    pub total_issues: Option<i64>,
+    #[serde(rename = "completed_issues")]
+    pub completed_issues: Option<i64>,
+    #[serde(rename = "started_issues")]
+    pub started_issues: Option<i64>,
+    #[serde(rename = "unstarted_issues")]
+    pub unstarted_issues: Option<i64>,
+    #[serde(rename = "backlog_issues")]
+    pub backlog_issues: Option<i64>,
+    #[serde(rename = "cancelled_issues")]
+    pub cancelled_issues: Option<i64>,
+    #[serde(rename = "created_at")]
+    pub created_at: Option<String>,
+    #[serde(rename = "updated_at")]
+    pub updated_at: Option<String>,
+}
+
+/// Request body for cycle create/update.
+///
+/// `owned_by` and `project_id` are required on create (the API fills in the
+/// owner from the authenticated user when omitted from PATCH bodies).
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct CycleWrite {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    #[serde(rename = "start_date")]
+    pub start_date: Option<String>,
+    #[serde(rename = "end_date")]
+    pub end_date: Option<String>,
+    #[serde(rename = "owned_by")]
+    pub owned_by: Option<String>,
+    #[serde(rename = "project_id")]
+    pub project_id: Option<String>,
+}
+
 /// Project summary embedded in cross-project work-item listings.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectDetail {

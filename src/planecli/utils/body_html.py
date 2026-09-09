@@ -62,6 +62,101 @@ def _extract_code_blocks(text: str) -> tuple[str, list[str]]:
     return text, blocks
 
 
+_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$")
+_UL_ITEM_RE = re.compile(r"^[-*+][ \t]+(.*)$")
+_OL_ITEM_RE = re.compile(r"^\d{1,9}[.)][ \t]+(.*)$")
+_CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+_BOLD_RE = re.compile(r"(\*\*|__)(.+?)\1")
+_EM_STAR_RE = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
+_EM_UNDER_RE = re.compile(r"(?<![\w_])_([^_\n]+)_(?![\w_])")
+_TOKEN_ONLY_RE = re.compile(r"(?:\x00\d+\x00[ \t]*)+")
+
+
+def _md_inline(text: str) -> str:
+    """Apply the inline markdown subset to one block of user text.
+
+    Everything is HTML-escaped first, so user text (e.g. a script tag written
+    literally) renders as-is and only the generated tags pass through
+    unescaped. Code spans are recognized on the escaped text, so their
+    content is escaped exactly once.
+    """
+    text = html.escape(text)
+    text = _CODE_SPAN_RE.sub(r"<code>\1</code>", text)
+    text = _BOLD_RE.sub(r"<strong>\2</strong>", text)
+    text = _EM_STAR_RE.sub(r"<em>\1</em>", text)
+    text = _EM_UNDER_RE.sub(r"<em>\1</em>", text)
+    return _linkify(text)
+
+
+def _md_list(lines: list[str]) -> str:
+    """Render consecutive list-item lines as ul/ol. A non-item line joins the
+    previous item (lazy continuation); a bullet-style change starts a new list."""
+    out: list[str] = []
+    tag: str | None = None
+    items: list[str] = []
+
+    def flush() -> None:
+        nonlocal tag, items
+        if tag is not None:
+            lis = "".join(f"<li>{_md_inline(item)}</li>" for item in items)
+            out.append(f"<{tag}>{lis}</{tag}>")
+            tag = None
+            items = []
+
+    for line in lines:
+        stripped = line.strip()
+        match = _UL_ITEM_RE.match(stripped) or _OL_ITEM_RE.match(stripped)
+        if match is None:
+            if items and stripped:
+                items[-1] += " " + stripped
+            continue
+        kind = "ul" if stripped[:1] in "-*+" else "ol"
+        if kind != tag:
+            flush()
+            tag = kind
+        items.append(match.group(1))
+    flush()
+    return "".join(out)
+
+
+def md_to_html(md: str) -> str:
+    """Convert a markdown subset to the HTML Plane's editor stores.
+
+    Supported: ATX headings (one to six hash marks), unordered lists (dash,
+    star, or plus bullets), ordered lists (number-dot), paragraphs separated
+    by blank lines, inline code spans, fenced code blocks (pre-wrapped code),
+    bold/italic, and bare http(s) URLs (linkified). All user text is
+    HTML-escaped before markup is applied — only the generated tags are
+    unescaped.
+    """
+    text, blocks = _extract_code_blocks(md.strip())
+    parts: list[str] = []
+    for chunk in re.split(r"\n\s*\n", text):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        lines = chunk.split("\n")
+        first = lines[0].strip()
+        if _UL_ITEM_RE.match(first) or _OL_ITEM_RE.match(first):
+            parts.append(_md_list(lines))
+            continue
+        heading = _HEADING_RE.match(first) if len(lines) == 1 else None
+        if heading:
+            level = len(heading.group(1))
+            parts.append(f"<h{level}>{_md_inline(heading.group(2))}</h{level}>")
+            continue
+        converted = _md_inline(chunk).replace(chr(10), "<br/>")
+        if _TOKEN_ONLY_RE.fullmatch(chunk):
+            # A chunk that is only a code block keeps its pre wrapper.
+            parts.append(converted)
+        else:
+            parts.append(f"<p>{converted}</p>")
+    result = "".join(parts)
+    for i, fragment in enumerate(blocks):
+        result = result.replace(f"\x00{i}\x00", fragment)
+    return result
+
+
 def body_to_html(body: str) -> str:
     """Convert plain text to HTML paragraphs.
 

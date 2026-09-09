@@ -1072,6 +1072,45 @@ class TestWiCreate:
         create_data = call_args[0][3]
         assert create_data.estimate_point == "ep-uuid-5"
 
+    @patch("planecli.commands.work_items.output_single")
+    @patch("planecli.commands.work_items.run_sdk", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_client")
+    @patch("planecli.commands.work_items._resolve_project_id_async", new_callable=AsyncMock)
+    @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
+    async def test_create_with_desc_md(
+        self,
+        mock_invalidate,
+        mock_resolve_proj,
+        mock_get_client,
+        mock_get_ws,
+        mock_run_sdk,
+        mock_output,
+    ):
+        """--desc-md should be converted from markdown to description_html."""
+        mock_get_client.return_value = MagicMock()
+        mock_resolve_proj.return_value = "proj-1"
+
+        mock_item = MagicMock()
+        mock_item.model_dump.return_value = {
+            "id": "wi-1",
+            "name": "Test item",
+            "sequence_id": 1,
+            "priority": "medium",
+        }
+        mock_run_sdk.return_value = mock_item
+
+        await create("Test item", project="Frontend", desc_md="# Goal\n\n- a\n- b")
+
+        create_data = mock_run_sdk.call_args[0][3]
+        assert create_data.description_html == "<h1>Goal</h1><ul><li>a</li><li>b</li></ul>"
+
+    async def test_create_rejects_description_and_desc_md_together(self):
+        from planecli.exceptions import ValidationError
+
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            await create("Test item", project="Frontend", description="plain", desc_md="# md")
+
 
 class TestWiUpdate:
     """Tests for the wi update command."""
@@ -1081,7 +1120,10 @@ class TestWiUpdate:
     @patch("planecli.commands.work_items.resolve_estimate_point_async", new_callable=AsyncMock)
     @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
     @patch("planecli.commands.work_items.get_client")
-    @patch("planecli.commands.work_items.resolve_work_item_across_projects_async", new_callable=AsyncMock)
+    @patch(
+        "planecli.commands.work_items.resolve_work_item_across_projects_async",
+        new_callable=AsyncMock,
+    )
     @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
     async def test_update_with_estimate(
         self,
@@ -1119,7 +1161,10 @@ class TestWiUpdate:
     @patch("planecli.commands.work_items.run_sdk", new_callable=AsyncMock)
     @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
     @patch("planecli.commands.work_items.get_client")
-    @patch("planecli.commands.work_items.resolve_work_item_across_projects_async", new_callable=AsyncMock)
+    @patch(
+        "planecli.commands.work_items.resolve_work_item_across_projects_async",
+        new_callable=AsyncMock,
+    )
     @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
     async def test_update_without_estimate(
         self,
@@ -1148,6 +1193,48 @@ class TestWiUpdate:
         call_args = mock_run_sdk.call_args
         update_data = call_args[0][4]
         assert update_data.estimate_point is None
+
+    @patch("planecli.commands.work_items.output_single")
+    @patch("planecli.commands.work_items.run_sdk", new_callable=AsyncMock)
+    @patch("planecli.commands.work_items.get_workspace", return_value="test-ws")
+    @patch("planecli.commands.work_items.get_client")
+    @patch(
+        "planecli.commands.work_items.resolve_work_item_across_projects_async",
+        new_callable=AsyncMock,
+    )
+    @patch("planecli.cache.invalidate_resource", new_callable=AsyncMock)
+    async def test_update_with_desc_md(
+        self,
+        mock_invalidate,
+        mock_resolve_wi,
+        mock_get_client,
+        mock_get_ws,
+        mock_run_sdk,
+        mock_output,
+    ):
+        """--desc-md should be converted from markdown to description_html."""
+        mock_get_client.return_value = MagicMock()
+        mock_resolve_wi.return_value = ({"id": "wi-1", "name": "Test"}, "proj-1")
+
+        mock_updated = MagicMock()
+        mock_updated.model_dump.return_value = {
+            "id": "wi-1",
+            "name": "Test",
+            "sequence_id": 1,
+            "priority": "medium",
+        }
+        mock_run_sdk.return_value = mock_updated
+
+        await update("WI-1", desc_md="## Plan\n\n1. first\n2. second")
+
+        update_data = mock_run_sdk.call_args[0][4]
+        assert update_data.description_html == "<h2>Plan</h2><ol><li>first</li><li>second</li></ol>"
+
+    async def test_update_rejects_description_and_desc_md_together(self):
+        from planecli.exceptions import ValidationError
+
+        with pytest.raises(ValidationError, match="mutually exclusive"):
+            await update("WI-1", description="plain", desc_md="# md")
 
 
 class TestWiFields:

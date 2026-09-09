@@ -675,6 +675,17 @@ pub enum DocCmd {
         #[arg(long, short = 'p')]
         project: Option<String>,
     },
+    /// Archive a document (trash it) without deleting.
+    ///
+    /// Sets archived_at = today and verifies the archive landed; the page
+    /// stays recoverable in the web UI trash.
+    Archive {
+        /// Page name or UUID.
+        doc: String,
+        /// Project name, identifier, or UUID. If omitted, operates on a workspace page.
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
     /// Delete a document.
     ///
     /// Pages must be archived before the API accepts a DELETE, so this first
@@ -1385,6 +1396,9 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     cli.json,
                 )
                 .await
+            }
+            DocCmd::Archive { doc, project } => {
+                cmd_doc_archive(&client, &doc, project.as_deref()).await
             }
             DocCmd::Delete { doc, project } => {
                 cmd_doc_delete(&client, &doc, project.as_deref()).await
@@ -3517,6 +3531,26 @@ async fn cmd_doc_update(
 /// an unarchived page with a 400; a bare `is_archived` flag is silently
 /// ignored (ADR-0007). So this archives with `archived_at` = today, verifies
 /// the response actually carries the date, and only then deletes.
+async fn cmd_doc_archive(
+    client: &PlaneClient,
+    doc: &str,
+    project: Option<&str>,
+) -> Result<(), PlaneError> {
+    let scope = page_scope(client, project).await?;
+    let found = resolve_page(client, &scope, doc).await?;
+    let name = found.name.clone().unwrap_or_else(|| found.id.clone());
+    let today = today_ymd();
+    let raw = client.archive_page(&scope, &found.id, &today).await?;
+    if raw.get("archived_at").and_then(Value::as_str) != Some(today.as_str()) {
+        return Err(PlaneError::Api {
+            message: "the document was not archived. Archiving may require a higher project role."
+                .into(),
+        });
+    }
+    eprintln!("Document '{name}' archived.");
+    Ok(())
+}
+
 async fn cmd_doc_delete(
     client: &PlaneClient,
     doc: &str,

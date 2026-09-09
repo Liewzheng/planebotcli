@@ -10,9 +10,11 @@ use planebotcli_cache::Cache;
 use planebotcli_client::PlaneClient;
 use planebotcli_core::{PlaneError, load_config};
 use planebotcli_format::{output_json, output_table};
-use planebotcli_resolve::{resolve_project, resolve_user_query};
+use planebotcli_resolve::{
+    locate_work_item_across, locate_work_item_in_project, resolve_project, resolve_user_query,
+};
 use planebotcli_types::{Project, WorkItem};
-use render::{Lookups, work_item_view};
+use render::{Lookups, comment_json, work_item_view};
 use serde_json::Value;
 
 #[derive(Parser)]
@@ -89,6 +91,17 @@ pub enum WiCmd {
         #[arg(long, short = 'l')]
         limit: Option<usize>,
     },
+    /// Show work item details.
+    Show {
+        /// Work item identifier (ABC-123), UUID, or name.
+        issue: String,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Skip fetching the work item's comments.
+        #[arg(long)]
+        no_comments: bool,
+    },
 }
 
 /// Run the parsed CLI and return the first error (mapped to an exit code).
@@ -121,6 +134,21 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     limit: limit.unwrap_or(50),
                 };
                 cmd_wi_list(&client, &cfg.base_url, &opts, cli.json).await
+            }
+            WiCmd::Show {
+                issue,
+                project,
+                no_comments,
+            } => {
+                cmd_wi_show(
+                    &client,
+                    &cfg.base_url,
+                    &issue,
+                    project.as_deref(),
+                    no_comments,
+                    cli.json,
+                )
+                .await
             }
         },
     }
@@ -360,6 +388,135 @@ async fn cmd_wi_list(
             &["ID", "Title", "Priority", "State", "Assignees", "Created"],
             &table_rows,
         );
+    }
+    Ok(())
+}
+
+async fn cmd_wi_show(
+    client: &PlaneClient,
+    base_url: &str,
+    issue: &str,
+    project: Option<&str>,
+    no_comments: bool,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let workspace = client.workspace().to_string();
+
+    // Locate the item: project-scoped when -p is given, otherwise across all.
+    let located = match project {
+        Some(p) => {
+            let proj = resolve_project(p, client).await?;
+            let mut found = locate_work_item_in_project(issue, &proj, client).await?;
+            if found.project_id.is_empty() {
+                found.project_id = proj.id.clone();
+            }
+            found
+        }
+        None => locate_work_item_across(issue, client).await?,
+    };
+
+    let detail = client
+        .get_work_item(&located.project_id, &located.item.id)
+        .await?;
+    let states = client.list_states(&located.project_id).await?;
+    let label_rows = client.list_labels(&located.project_id).await?;
+    let members = client.list_members().await?;
+    let state_map: HashMap<String, String> = states
+        .into_iter()
+        .map(|s| (s.id, s.name.unwrap_or_default()))
+        .collect();
+    let label_map: HashMap<String, String> = label_rows
+        .into_iter()
+        .map(|l| (l.id, l.name.unwrap_or_default()))
+        .collect();
+    let member_map: HashMap<String, String> = members
+        .into_iter()
+        .map(|m| {
+            let name = m.full_name();
+            (m.id, name)
+        })
+        .collect();
+    let lookups = Lookups {
+        state_map,
+        label_map,
+        member_map,
+    };
+    let mut view = work_item_view(
+        &detail,
+        &located.project_identifier,
+        &lookups,
+        base_url,
+        &workspace,
+    );
+
+    // Comments are a secondary enrichment: a fetch failure degrades to null
+    // instead of aborting the command.
+    if !no_comments {
+        match client.list_comments(&located.project_id, &detail.id).await {
+            Ok(comments) => {
+                let items: Vec<Value> = comments
+                    .iter()
+                    .map(|c| comment_json(c, &lookups.member_map))
+                    .collect();
+                view["comments"] = Value::Array(items);
+            }
+            Err(e) => {
+                view["comments"] = Value::Null;
+                eprintln!("[warn] failed to load comments: {e}");
+            }
+        }
+    }
+
+    if json {
+        output_json(&view);
+    } else {
+        let fields: Vec<(&str, &str)> = vec![
+            ("id", "UUID"),
+            ("sequence_id", "Sequence ID"),
+            ("name", "Title"),
+            ("description_stripped", "Description"),
+            ("priority", "Priority"),
+            ("state_detail_name", "State"),
+            ("assignee_names", "Assignees"),
+            ("label_names", "Labels"),
+            ("estimate_display", "Estimate"),
+            ("start_date", "Start Date"),
+            ("target_date", "Target Date"),
+            ("created_at", "Created"),
+            ("updated_at", "Updated"),
+            ("web_url", "Web URL"),
+        ];
+        let rows: Vec<Vec<String>> = fields
+            .iter()
+            .map(|(key, _)| {
+                vec![
+                    key.to_string(),
+                    view[key].as_str().unwrap_or("").to_string(),
+                ]
+            })
+            .collect();
+        output_table(&["Field", "Value"], &rows);
+
+        if !no_comments {
+            eprintln!();
+            match view.get("comments") {
+                Some(Value::Array(items)) if !items.is_empty() => {
+                    let comment_rows: Vec<Vec<String>> = items
+                        .iter()
+                        .map(|c| {
+                            vec![
+                                fmt_ts(c["created_at"].as_str().unwrap_or("")),
+                                c["actor_name"].as_str().unwrap_or("").to_string(),
+                                c["comment_stripped"].as_str().unwrap_or("").to_string(),
+                            ]
+                        })
+                        .collect();
+                    output_table(&["Created", "Actor", "Comment"], &comment_rows);
+                }
+                Some(Value::Array(_)) => eprintln!("Comments: (none)"),
+                _ => eprintln!("Comments: (failed to load)"),
+            }
+        }
     }
     Ok(())
 }

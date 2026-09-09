@@ -9,3 +9,5 @@ planebotcli-client = { path = "../planebotcli-client" }
 planebotcli-core = { path = "../planebotcli-core" }
 planebotcli-types = { path = "../planebotcli-types" }
 rapidfuzz = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }

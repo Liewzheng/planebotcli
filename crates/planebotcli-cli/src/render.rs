@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use planebotcli_html::strip_html_tags;
-use planebotcli_types::WorkItem;
+use planebotcli_types::{Comment, WorkItem};
 use serde_json::{Value, json};
 
 /// Lookup maps used to resolve UUIDs to human names.
@@ -157,8 +157,10 @@ pub fn work_item_view(
         "id": item.id,
         "sequence_id": sequence_id,
         "name": item.name.clone().unwrap_or_default(),
+        "description_html": item.description_html.clone().unwrap_or_default(),
         "description_stripped": strip_html_tags(item.description_html.as_deref().unwrap_or("")).trim(),
         "priority": priority,
+        "state": raw_value(item.state.as_ref()),
         "state_detail_name": name_or_lookup(&item.state, &lookups.state_map, false),
         "assignee_names": assignee_names,
         "label_names": label_names,
@@ -178,6 +180,29 @@ pub fn work_item_view(
 /// `{base_url}/{workspace}` with the base URL's trailing slash stripped.
 fn web_base(base_url: &str, workspace: &str) -> String {
     format!("{}/{}", base_url.trim_end_matches('/'), workspace)
+}
+
+/// Keep a polymorphic state value (UUID string or object) as-is for JSON.
+fn raw_value(value: Option<&Value>) -> Value {
+    value.cloned().unwrap_or(Value::Null)
+}
+
+/// JSON view of a comment, mirroring the Python `wi show` comment entries.
+pub fn comment_json(comment: &Comment, member_map: &HashMap<String, String>) -> Value {
+    let actor = comment.actor.clone().unwrap_or_default();
+    let actor_name = member_map
+        .get(&actor)
+        .cloned()
+        .unwrap_or_else(|| actor.chars().take(8).collect());
+    json!({
+        "id": comment.id,
+        "created_at": comment.created_at.clone().unwrap_or_default(),
+        "updated_at": comment.updated_at.clone().unwrap_or_default(),
+        "comment_html": comment.comment_html.clone().unwrap_or_default(),
+        "comment_stripped": comment.comment_stripped.clone().unwrap_or_default(),
+        "actor": actor,
+        "actor_name": actor_name,
+    })
 }
 
 #[cfg(test)]

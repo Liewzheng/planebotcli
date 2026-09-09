@@ -114,6 +114,102 @@ pub async fn resolve_user_query(
     })
 }
 
+/// A located work item: the raw item plus the project context it lives in.
+#[derive(Debug, Clone)]
+pub struct LocatedWorkItem {
+    pub item: planebotcli_types::WorkItem,
+    pub project_id: String,
+    pub project_identifier: String,
+}
+
+/// Match one query (UUID, full identifier `PROJ-123`, or name) against a list
+/// of (item, project identifier) candidates.
+fn match_work_item(
+    query: &str,
+    candidates: &[(planebotcli_types::WorkItem, &str)],
+) -> Option<LocatedWorkItem> {
+    let lower = query.to_lowercase();
+    for (item, identifier) in candidates {
+        let id_matches = item.id.eq_ignore_ascii_case(query);
+        let seq = item.sequence_id.as_ref().map(|v| match v {
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::String(s) => s.clone(),
+            _ => String::new(),
+        });
+        let composed = seq
+            .filter(|s| !s.is_empty() && !identifier.is_empty())
+            .map(|s| format!("{identifier}-{s}"));
+        let seq_matches = composed
+            .as_deref()
+            .map(|c| c.eq_ignore_ascii_case(query))
+            .unwrap_or(false);
+        let name = item.name.as_deref().unwrap_or("");
+        if id_matches || seq_matches || (!is_uuid(query) && name.to_lowercase().contains(&lower)) {
+            return Some(LocatedWorkItem {
+                item: item.clone(),
+                project_id: item.project.clone().unwrap_or_default(),
+                project_identifier: identifier.to_string(),
+            });
+        }
+    }
+    // Fuzzy name match over all candidates.
+    let with_names: Vec<(&planebotcli_types::WorkItem, &str, String)> = candidates
+        .iter()
+        .map(|(item, identifier)| (item, *identifier, item.name.clone().unwrap_or_default()))
+        .collect();
+    if let Some(m) = find_best_match(query, &with_names, |(_, _, name)| name.as_str()) {
+        let (item, identifier, _) = m.item;
+        return Some(LocatedWorkItem {
+            item: (*item).clone(),
+            project_id: item.project.clone().unwrap_or_default(),
+            project_identifier: identifier.to_string(),
+        });
+    }
+    None
+}
+
+/// Locate a work item within a single project (from its work-item list).
+pub async fn locate_work_item_in_project(
+    query: &str,
+    project: &planebotcli_types::Project,
+    client: &PlaneClient,
+) -> Result<LocatedWorkItem, PlaneError> {
+    let items = client.list_work_items(&project.id).await?;
+    let identifier = project.identifier.clone().unwrap_or_default();
+    let candidates: Vec<(planebotcli_types::WorkItem, &str)> = items
+        .iter()
+        .map(|i| (i.clone(), identifier.as_str()))
+        .collect();
+    match_work_item(query, &candidates).ok_or_else(|| PlaneError::NotFound {
+        message: format!("Work item not found: {query}"),
+    })
+}
+
+/// Locate a work item across all projects, matching by UUID, full identifier,
+/// or name. Cross-project searches fire many requests, so projects are paced.
+pub async fn locate_work_item_across(
+    query: &str,
+    client: &PlaneClient,
+) -> Result<LocatedWorkItem, PlaneError> {
+    let projects = client.list_projects().await?;
+    let mut candidates: Vec<(planebotcli_types::WorkItem, String)> = Vec::new();
+    for (i, project) in projects.iter().enumerate() {
+        if i > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        let items = client.list_work_items(&project.id).await?;
+        let identifier = project.identifier.clone().unwrap_or_default();
+        candidates.extend(items.into_iter().map(|item| (item, identifier.clone())));
+    }
+    let refs: Vec<(planebotcli_types::WorkItem, &str)> = candidates
+        .iter()
+        .map(|(i, s)| (i.clone(), s.as_str()))
+        .collect();
+    match_work_item(query, &refs).ok_or_else(|| PlaneError::NotFound {
+        message: format!("Work item not found: {query}"),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

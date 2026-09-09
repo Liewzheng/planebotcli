@@ -8,8 +8,8 @@
 use planebotcli_cache::Cache;
 use planebotcli_core::{Config, PlaneError};
 use planebotcli_types::{
-    Comment, CommentWrite, Cycle, CycleWrite, Label, LabelWrite, Member, Module, ModuleWrite,
-    Project, ProjectWrite, State, StateWrite, User, WorkItem, WorkItemWrite,
+    Comment, CommentWrite, Cycle, CycleWrite, IntakeItem, IntakeWrite, Label, LabelWrite, Member,
+    Module, ModuleWrite, Project, ProjectWrite, State, StateWrite, User, WorkItem, WorkItemWrite,
 };
 use serde::de::DeserializeOwned;
 use std::time::Duration;
@@ -20,6 +20,7 @@ const TTL_PROJECTS: Duration = Duration::from_secs(60);
 const TTL_STATES: Duration = Duration::from_secs(120);
 const TTL_LABELS: Duration = Duration::from_secs(120);
 const TTL_WORK_ITEMS: Duration = Duration::from_secs(60);
+const TTL_INTAKE: Duration = Duration::from_secs(60);
 const TTL_MODULES: Duration = Duration::from_secs(300);
 const TTL_CYCLES: Duration = Duration::from_secs(300);
 
@@ -724,6 +725,90 @@ impl PlaneClient {
             self.workspace, project_id, cycle_id
         );
         self.paginate(&path).await
+    }
+
+    /// `GET .../projects/{pid}/intake-issues/` — all pages (cached).
+    ///
+    /// The API returns an empty list whenever the project's intake view is
+    /// off; there is no client-side gate (the Python CLI does the same).
+    pub async fn list_intake(&self, project_id: &str) -> Result<Vec<IntakeItem>, PlaneError> {
+        let key = format!("intake:{}:{}", self.workspace, project_id);
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/intake-issues/",
+            self.workspace, project_id
+        );
+        self.cached_list(&key, TTL_INTAKE, async move { self.paginate(&path).await })
+            .await
+    }
+
+    /// `POST .../projects/{pid}/intake-issues/` — submit a work item to the
+    /// project's intake queue.
+    pub async fn create_intake(
+        &self,
+        project_id: &str,
+        body: &IntakeWrite,
+    ) -> Result<IntakeItem, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/intake-issues/",
+            self.workspace, project_id
+        );
+        let result = self
+            .request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate_intake(project_id);
+        result
+    }
+
+    /// `PATCH .../projects/{pid}/intake-issues/{work_item_id}/` — set the
+    /// intake status (accept = 1, decline = -1).
+    ///
+    /// Returns the raw parsed response so the caller can verify the write:
+    /// a non-project-Admin caller gets HTTP 200 with the record unchanged
+    /// (ADR-0007), so a 200 alone is not proof the triage happened.
+    pub async fn update_intake_status(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+        status: i64,
+    ) -> Result<serde_json::Value, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/intake-issues/{}/",
+            self.workspace, project_id, work_item_id
+        );
+        let body = serde_json::json!({ "status": status });
+        let result = self
+            .request_json(reqwest::Method::PATCH, &path, &[], Some(&body))
+            .await;
+        self.invalidate_intake(project_id);
+        result
+    }
+
+    /// `DELETE .../projects/{pid}/intake-issues/{work_item_id}/` — remove an
+    /// intake item. For any status other than `accepted` the server also
+    /// permanently deletes the underlying work item.
+    pub async fn delete_intake(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+    ) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/intake-issues/{}/",
+            self.workspace, project_id, work_item_id
+        );
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::DELETE, &path, &[], None)
+            .await?;
+        self.invalidate_intake(project_id);
+        Ok(())
+    }
+
+    /// Drop the intake queue cache and the work-item cache for a project.
+    /// Every intake write also creates/moves/deletes the underlying work item,
+    /// so both caches are stale afterwards (mirrors the Python
+    /// `invalidate_resource("work_items", ...)` on intake mutations).
+    fn invalidate_intake(&self, project_id: &str) {
+        self.invalidate(&format!("intake:{}:{}", self.workspace, project_id));
+        self.invalidate(&format!("work_items:{}:{}", self.workspace, project_id));
     }
 }
 

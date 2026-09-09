@@ -57,6 +57,10 @@ pub struct Project {
     pub name: Option<String>,
     pub identifier: Option<String>,
     pub description: Option<String>,
+    /// Whether the project's intake queue is enabled (the project's
+    /// `intake_view` flag; absent in some serializers, so `None` means off).
+    #[serde(default, rename = "intake_view")]
+    pub intake_view: Option<bool>,
     #[serde(rename = "created_at")]
     pub created_at: Option<String>,
     #[serde(rename = "updated_at")]
@@ -284,4 +288,52 @@ pub struct Comment {
 pub struct CommentWrite {
     #[serde(rename = "comment_html")]
     pub comment_html: String,
+}
+
+/// An intake queue row (the `IntakeIssue` record), as returned by the
+/// `/intake-issues/` endpoints.
+///
+/// The wrapper has its own `id`; the underlying work item's UUID is the
+/// `issue` field (shown as "Issue ID" by the CLI and used as the target of
+/// accept/decline/delete — never the wrapper `id`). `issue_detail` carries an
+/// expanded copy of the work item (name, priority, state, ...) that the API
+/// includes.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct IntakeItem {
+    /// Intake wrapper id — NOT the work-item uuid.
+    pub id: String,
+    /// Work-item UUID — the triage target / "Issue ID" column.
+    #[serde(default, alias = "issue_id")]
+    pub issue: Option<String>,
+    /// Expanded work item (id/name/priority/state/...), when the API expands it.
+    #[serde(default, rename = "issue_detail")]
+    pub issue_detail: Option<Value>,
+    /// Intake status code: -2 pending, -1 rejected, 0 snoozed, 1 accepted,
+    /// 2 duplicate.
+    #[serde(default)]
+    pub status: Option<i64>,
+    #[serde(default, rename = "created_at")]
+    pub created_at: Option<String>,
+    #[serde(default, rename = "updated_at")]
+    pub updated_at: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub workspace: Option<String>,
+}
+
+/// Request body for `intake create`: the work item data nested under `issue`.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct IntakeWrite {
+    #[serde(rename = "issue")]
+    pub issue: IntakeIssueWrite,
+}
+
+/// The embedded work item of an intake create request.
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct IntakeIssueWrite {
+    pub name: String,
+    #[serde(rename = "description_html")]
+    pub description_html: Option<String>,
+    pub priority: Option<String>,
 }

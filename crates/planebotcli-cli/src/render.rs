@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use planebotcli_html::strip_html_tags;
-use planebotcli_types::{Comment, WorkItem};
+use planebotcli_types::{Comment, IntakeItem, WorkItem};
 use serde_json::{Value, json};
 
 /// Lookup maps used to resolve UUIDs to human names.
@@ -202,6 +202,57 @@ pub fn comment_json(comment: &Comment, member_map: &HashMap<String, String>) -> 
         "comment_stripped": comment.comment_stripped.clone().unwrap_or_default(),
         "actor": actor,
         "actor_name": actor_name,
+    })
+}
+
+/// Intake status codes → labels (mirrors the Python `INTAKE_STATUS_LABELS`).
+/// Unknown codes render as their raw number; a missing status as an empty
+/// string.
+pub fn intake_status_label(status: Option<i64>) -> String {
+    match status {
+        None => String::new(),
+        Some(-2) => "pending".to_string(),
+        Some(-1) => "rejected".to_string(),
+        Some(0) => "snoozed".to_string(),
+        Some(1) => "accepted".to_string(),
+        Some(2) => "duplicate".to_string(),
+        Some(other) => other.to_string(),
+    }
+}
+
+/// Enriched JSON view of an intake row, mirroring the Python `_enrich_intake`:
+/// `name`/`priority` are flattened from the nested `issue_detail`, `issue_id`
+/// is the work-item UUID (`issue`, falling back to the nested detail id), and
+/// the numeric `status` becomes its label.
+pub fn intake_view(item: &IntakeItem) -> Value {
+    let detail = item.issue_detail.clone().unwrap_or(Value::Null);
+    let pick = |key: &str| -> String {
+        match detail.get(key) {
+            Some(Value::String(s)) if !s.is_empty() => s.clone(),
+            _ => String::new(),
+        }
+    };
+    let name = pick("name");
+    let mut priority = pick("priority");
+    if priority.is_empty() {
+        priority = "none".to_string();
+    }
+    let issue_id = match item.issue.as_deref() {
+        Some(s) if !s.is_empty() => s.to_string(),
+        _ => pick("id"),
+    };
+    json!({
+        "id": item.id,
+        "issue": item.issue.clone().unwrap_or_default(),
+        "issue_detail": detail,
+        "project": item.project.clone().unwrap_or_default(),
+        "workspace": item.workspace.clone().unwrap_or_default(),
+        "status": intake_status_label(item.status),
+        "created_at": item.created_at.clone().unwrap_or_default(),
+        "updated_at": item.updated_at.clone().unwrap_or_default(),
+        "name": name,
+        "priority": priority,
+        "issue_id": issue_id,
     })
 }
 

@@ -14,11 +14,11 @@ use planebotcli_resolve::{
     locate_work_item_across, locate_work_item_in_project, resolve_project, resolve_user_query,
 };
 use planebotcli_types::{
-    CommentWrite, Cycle, CycleWrite, Label, LabelWrite, Module, ModuleWrite, Project, ProjectWrite,
-    State, StateWrite, WorkItem, WorkItemWrite,
+    CommentWrite, Cycle, CycleWrite, IntakeIssueWrite, IntakeItem, IntakeWrite, Label, LabelWrite,
+    Module, ModuleWrite, Project, ProjectWrite, State, StateWrite, WorkItem, WorkItemWrite,
 };
-use render::{Lookups, comment_json, work_item_view};
-use serde_json::Value;
+use render::{Lookups, comment_json, intake_status_label, intake_view, work_item_view};
+use serde_json::{Value, json};
 
 #[derive(Parser)]
 #[command(
@@ -82,6 +82,11 @@ pub enum Command {
     Cycle {
         #[command(subcommand)]
         command: CycleCmd,
+    },
+    /// Manage project intake queues.
+    Intake {
+        #[command(subcommand)]
+        command: IntakeCmd,
     },
     /// Workspace members.
     User {
@@ -463,6 +468,73 @@ pub enum CycleCmd {
         /// Project name, identifier, or UUID (required).
         #[arg(long, short = 'p')]
         project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum IntakeCmd {
+    /// List items in a project's intake queue.
+    #[command(alias = "ls")]
+    List {
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Create a new item in a project's intake queue.
+    #[command(alias = "new")]
+    Create {
+        /// Item title.
+        name: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Item description (plain text; HTML-escaped into a paragraph tag).
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+        /// Priority: none, low, medium, high, urgent. Default: none.
+        #[arg(long, short = 'P')]
+        priority: Option<String>,
+    },
+    /// Accept (triage) an intake item, converting it into a regular work item.
+    ///
+    /// Requires the project Admin role; other roles get an error instead of a
+    /// silent no-op.
+    Accept {
+        /// Work item UUID — the "Issue ID" column of `intake ls` (not the
+        /// intake wrapper ID).
+        issue_id: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Decline (reject) an intake item.
+    ///
+    /// Requires the project Admin role; other roles get an error instead of a
+    /// silent no-op.
+    Decline {
+        /// Work item UUID — the "Issue ID" column of `intake ls` (not the
+        /// intake wrapper ID).
+        issue_id: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Delete an intake item.
+    ///
+    /// For any status other than 'accepted' this also permanently deletes the
+    /// underlying work item, not just the intake queue entry.
+    Delete {
+        /// Work item UUID — the "Issue ID" column of `intake ls` (not the
+        /// intake wrapper ID).
+        issue_id: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Check whether a project has intake enabled.
+    Enabled {
+        /// Project name, identifier, or UUID.
+        project: String,
     },
 }
 
@@ -987,6 +1059,37 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
             CycleCmd::Items { cycle, project } => {
                 cmd_cycle_items(&client, &cfg.base_url, &cycle, project.as_deref(), cli.json).await
             }
+        },
+        Command::Intake { command } => match command {
+            IntakeCmd::List { project } => {
+                cmd_intake_list(&client, project.as_deref(), cli.json).await
+            }
+            IntakeCmd::Create {
+                name,
+                project,
+                description,
+                priority,
+            } => {
+                cmd_intake_create(
+                    &client,
+                    &name,
+                    project.as_deref(),
+                    description.as_deref(),
+                    priority.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            IntakeCmd::Accept { issue_id, project } => {
+                cmd_intake_triage(&client, &issue_id, project.as_deref(), 1, cli.json).await
+            }
+            IntakeCmd::Decline { issue_id, project } => {
+                cmd_intake_triage(&client, &issue_id, project.as_deref(), -1, cli.json).await
+            }
+            IntakeCmd::Delete { issue_id, project } => {
+                cmd_intake_delete(&client, &issue_id, project.as_deref()).await
+            }
+            IntakeCmd::Enabled { project } => cmd_intake_enabled(&client, &project, cli.json).await,
         },
         Command::User { command } => match command {
             UserCmd::List => cmd_user_list(&client, cli.json).await,
@@ -2983,6 +3086,176 @@ async fn cmd_cycle_items(
     Ok(())
 }
 
+/// Valid intake priorities — words only. The Python intake rejects the numeric
+/// aliases (`0`-`4`) that `wi create` accepts, and an explicit empty string.
+const INTAKE_PRIORITIES: [&str; 5] = ["none", "low", "medium", "high", "urgent"];
+
+/// Normalize and validate an intake `--priority` flag. An explicit `--priority
+/// ""` reaches this validator and is rejected (never silently defaulted).
+fn normalize_intake_priority(value: &str) -> Result<String, PlaneError> {
+    let key = value.trim().to_lowercase();
+    if !INTAKE_PRIORITIES.contains(&key.as_str()) {
+        return Err(PlaneError::Validation {
+            message: format!("Invalid priority '{value}'."),
+            hint: Some(format!("Valid values: {}.", INTAKE_PRIORITIES.join(", "))),
+        });
+    }
+    Ok(key)
+}
+
+/// HTML-escape a plain-text fragment, mirroring Python's `html.escape`.
+/// Intake descriptions are escaped so tags render as text (unlike `wi
+/// create`, which passes raw HTML through untouched).
+fn html_escape_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+async fn cmd_intake_list(
+    client: &PlaneClient,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let items = client.list_intake(&proj.id).await?;
+    let views: Vec<Value> = items.iter().map(intake_view).collect();
+    if json {
+        output_json(&views);
+    } else {
+        let rows: Vec<Vec<String>> = views
+            .iter()
+            .map(|v| {
+                vec![
+                    v["name"].as_str().unwrap_or("").to_string(),
+                    v["priority"].as_str().unwrap_or("").to_string(),
+                    v["status"].as_str().unwrap_or("").to_string(),
+                    fmt_ts(v["created_at"].as_str().unwrap_or("")),
+                    v["issue_id"].as_str().unwrap_or("").to_string(),
+                ]
+            })
+            .collect();
+        output_table(
+            &["Name", "Priority", "Status", "Created", "Issue ID"],
+            &rows,
+        );
+    }
+    Ok(())
+}
+
+async fn cmd_intake_create(
+    client: &PlaneClient,
+    name: &str,
+    project: Option<&str>,
+    description: Option<&str>,
+    priority: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    // Validate before touching the network (Python normalizes priority first).
+    let priority = match priority {
+        Some(raw) => normalize_intake_priority(raw)?,
+        None => "none".to_string(),
+    };
+    let proj = require_project(client, project).await?;
+    let write = IntakeWrite {
+        issue: IntakeIssueWrite {
+            name: name.to_string(),
+            description_html: description.map(|d| format!("<p>{}</p>", html_escape_text(d))),
+            priority: Some(priority),
+        },
+    };
+    let created = client.create_intake(&proj.id, &write).await?;
+    output_intake_item(&created, json);
+    Ok(())
+}
+
+/// Print a single intake row: JSON to stdout, or a Field/Value table to stderr
+/// (Python's `INTAKE_FIELDS` ordering and labels).
+fn output_intake_item(item: &IntakeItem, json: bool) {
+    if json {
+        output_json(&intake_view(item));
+        return;
+    }
+    let view = intake_view(item);
+    let s = |key: &str| view[key].as_str().unwrap_or("").to_string();
+    let rows = vec![
+        vec!["Issue ID".to_string(), s("issue_id")],
+        vec!["Intake ID".to_string(), s("id")],
+        vec!["Name".to_string(), s("name")],
+        vec!["Priority".to_string(), s("priority")],
+        vec!["Status".to_string(), s("status")],
+        vec!["Created".to_string(), fmt_ts(&s("created_at"))],
+        vec!["Updated".to_string(), fmt_ts(&s("updated_at"))],
+    ];
+    output_table(&["Field", "Value"], &rows);
+}
+
+/// Shared accept/decline body: PATCH the intake status of a work item and
+/// verify the write (ADR-0007). The API answers HTTP 200 with the record
+/// untouched when the caller is not a project Admin, so a 200 alone is not
+/// proof the triage happened.
+async fn cmd_intake_triage(
+    client: &PlaneClient,
+    issue_id: &str,
+    project: Option<&str>,
+    status: i64,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let raw = client
+        .update_intake_status(&proj.id, issue_id, status)
+        .await?;
+    let current = raw.get("status").and_then(Value::as_i64);
+    if current != Some(status) {
+        return Err(PlaneError::Api {
+            message: format!(
+                "the intake status was not changed (still '{}'). Triaging intake items requires the project Admin role.",
+                intake_status_label(current)
+            ),
+        });
+    }
+    let item: IntakeItem = serde_json::from_value(raw).map_err(|e| PlaneError::Api {
+        message: format!("invalid intake response after triage: {e}"),
+    })?;
+    output_intake_item(&item, json);
+    Ok(())
+}
+
+async fn cmd_intake_delete(
+    client: &PlaneClient,
+    issue_id: &str,
+    project: Option<&str>,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    client.delete_intake(&proj.id, issue_id).await?;
+    eprintln!("Intake item {issue_id} deleted.");
+    Ok(())
+}
+
+async fn cmd_intake_enabled(
+    client: &PlaneClient,
+    project: &str,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = resolve_project(project, client).await?;
+    let is_enabled = proj.intake_view.unwrap_or(false);
+    let name = proj.name.clone().unwrap_or_else(|| project.to_string());
+    if json {
+        output_json(&json!({
+            "project": name,
+            "project_id": proj.id,
+            "intake_enabled": is_enabled,
+        }));
+    } else if is_enabled {
+        eprintln!("Intake is enabled for {name} (ID: {})", proj.id);
+    } else {
+        eprintln!("Intake is NOT enabled for {name} (ID: {})", proj.id);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3016,5 +3289,88 @@ mod tests {
         );
         assert_eq!(normalize_priority(None).unwrap(), None);
         assert!(normalize_priority(Some("bogus")).is_err());
+    }
+
+    #[test]
+    fn intake_priority_words_only_case_and_space_insensitive() {
+        assert_eq!(normalize_intake_priority("urgent").unwrap(), "urgent");
+        assert_eq!(normalize_intake_priority("URGENT").unwrap(), "urgent");
+        assert_eq!(normalize_intake_priority("  High ").unwrap(), "high");
+        assert_eq!(normalize_intake_priority("None").unwrap(), "none");
+        // Numeric aliases and the empty string are rejected, unlike `wi`.
+        for bad in ["1", "2", "", "  ", "urgnet", "critical"] {
+            assert!(
+                normalize_intake_priority(bad).is_err(),
+                "{bad:?} should fail"
+            );
+        }
+    }
+
+    #[test]
+    fn intake_status_labels() {
+        assert_eq!(intake_status_label(Some(-2)), "pending");
+        assert_eq!(intake_status_label(Some(-1)), "rejected");
+        assert_eq!(intake_status_label(Some(0)), "snoozed");
+        assert_eq!(intake_status_label(Some(1)), "accepted");
+        assert_eq!(intake_status_label(Some(2)), "duplicate");
+        assert_eq!(intake_status_label(None), "");
+        assert_eq!(intake_status_label(Some(99)), "99"); // unknown code shown raw
+    }
+
+    #[test]
+    fn html_escape_matches_python_escape() {
+        assert_eq!(html_escape_text("a < b & c"), "a &lt; b &amp; c");
+        assert_eq!(
+            html_escape_text("quote \" and '"),
+            "quote &quot; and &#x27;"
+        );
+        assert_eq!(html_escape_text("plain"), "plain");
+    }
+
+    #[test]
+    fn intake_view_flattens_issue_detail_and_maps_status() {
+        let item = IntakeItem {
+            id: "intake-1".into(),
+            issue: Some("issue-1".into()),
+            status: Some(-2),
+            issue_detail: Some(json!({"id": "issue-1", "name": "Bug report", "priority": "high"})),
+            ..Default::default()
+        };
+        let view = intake_view(&item);
+        assert_eq!(view["name"], "Bug report");
+        assert_eq!(view["priority"], "high");
+        assert_eq!(view["issue_id"], "issue-1");
+        assert_eq!(view["status"], "pending");
+        assert_eq!(view["id"], "intake-1");
+    }
+
+    #[test]
+    fn intake_view_missing_detail_uses_defaults_and_top_level_issue() {
+        let item = IntakeItem {
+            id: "intake-1".into(),
+            issue: Some("issue-1".into()),
+            status: Some(99),
+            issue_detail: None,
+            ..Default::default()
+        };
+        let view = intake_view(&item);
+        assert_eq!(view["name"], "");
+        assert_eq!(view["priority"], "none");
+        assert_eq!(view["issue_id"], "issue-1"); // falls back to top-level `issue`
+        assert_eq!(view["status"], "99"); // unknown code is shown raw, not hidden
+    }
+
+    #[test]
+    fn intake_view_issue_id_falls_back_to_issue_detail_id() {
+        let item = IntakeItem {
+            id: "intake-1".into(),
+            issue: None,
+            status: None,
+            issue_detail: Some(json!({"id": "issue-9", "name": "n"})),
+            ..Default::default()
+        };
+        let view = intake_view(&item);
+        assert_eq!(view["issue_id"], "issue-9");
+        assert_eq!(view["status"], "");
     }
 }

@@ -13,7 +13,10 @@ use planebotcli_format::{output_json, output_table};
 use planebotcli_resolve::{
     locate_work_item_across, locate_work_item_in_project, resolve_project, resolve_user_query,
 };
-use planebotcli_types::{CommentWrite, Project, WorkItem, WorkItemWrite};
+use planebotcli_types::{
+    CommentWrite, Label, LabelWrite, Project, ProjectWrite, State, StateWrite, WorkItem,
+    WorkItemWrite,
+};
 use render::{Lookups, comment_json, work_item_view};
 use serde_json::Value;
 
@@ -59,6 +62,16 @@ pub enum Command {
     Comment {
         #[command(subcommand)]
         command: CommentCmd,
+    },
+    /// Manage project labels.
+    Label {
+        #[command(subcommand)]
+        command: LabelCmd,
+    },
+    /// Manage project states.
+    State {
+        #[command(subcommand)]
+        command: StateCmd,
     },
     /// Workspace members.
     User {
@@ -143,6 +156,151 @@ pub enum ProjectCmd {
     /// List projects.
     #[command(alias = "ls")]
     List,
+    /// Show project details.
+    Show {
+        /// Project name, identifier, or UUID.
+        project: String,
+    },
+    /// Create a new project.
+    Create {
+        /// Project name.
+        name: String,
+        /// Short project identifier (e.g. FE, BE). Auto-generated if not specified.
+        #[arg(long, short = 'i')]
+        identifier: Option<String>,
+        /// Project description.
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+    },
+    /// Update a project.
+    Update {
+        /// Project name, identifier, or UUID.
+        project: String,
+        /// New project name.
+        #[arg(long)]
+        name: Option<String>,
+        /// New project identifier.
+        #[arg(long, short = 'i')]
+        identifier: Option<String>,
+        /// New project description.
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+    },
+    /// Delete a project.
+    Delete {
+        /// Project name, identifier, or UUID.
+        project: String,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum LabelCmd {
+    /// List labels in a project.
+    #[command(alias = "ls")]
+    List {
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Show label details.
+    Show {
+        /// Label name or UUID.
+        label: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Create a new label.
+    Create {
+        /// Label name.
+        name: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Label color (hex, e.g. #FF0000).
+        #[arg(long)]
+        color: Option<String>,
+    },
+    /// Update a label.
+    Update {
+        /// Label name or UUID.
+        label: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// New label name.
+        #[arg(long)]
+        name: Option<String>,
+        /// New color (hex, e.g. #FF0000).
+        #[arg(long)]
+        color: Option<String>,
+    },
+    /// Delete a label.
+    Delete {
+        /// Label name or UUID.
+        label: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum StateCmd {
+    /// List states in a project.
+    #[command(alias = "ls")]
+    List {
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Show state details.
+    Show {
+        /// State name or UUID.
+        state: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Create a new state.
+    Create {
+        /// State name.
+        name: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// State group: backlog, unstarted, started, completed, cancelled.
+        #[arg(long)]
+        group: Option<String>,
+        /// State color (hex, e.g. #FFA500).
+        #[arg(long)]
+        color: Option<String>,
+    },
+    /// Update a state.
+    Update {
+        /// State name or UUID.
+        state: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// New state name.
+        #[arg(long)]
+        name: Option<String>,
+        /// New group: backlog, unstarted, started, completed, cancelled.
+        #[arg(long)]
+        group: Option<String>,
+        /// New color (hex, e.g. #FFA500).
+        #[arg(long)]
+        color: Option<String>,
+    },
+    /// Delete a state.
+    Delete {
+        /// State name or UUID.
+        state: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -291,6 +449,38 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
         Command::Whoami => cmd_whoami(&client, cli.json).await,
         Command::Project { command } => match command {
             ProjectCmd::List => cmd_project_list(&client, &cfg, cli.no_cache, cli.json).await,
+            ProjectCmd::Show { project } => cmd_project_show(&client, &project, cli.json).await,
+            ProjectCmd::Create {
+                name,
+                identifier,
+                description,
+            } => {
+                cmd_project_create(
+                    &client,
+                    &name,
+                    identifier.as_deref(),
+                    description.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            ProjectCmd::Update {
+                project,
+                name,
+                identifier,
+                description,
+            } => {
+                cmd_project_update(
+                    &client,
+                    &project,
+                    name.as_deref(),
+                    identifier.as_deref(),
+                    description.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            ProjectCmd::Delete { project } => cmd_project_delete(&client, &project).await,
         },
         Command::Wi { command } => match command {
             WiCmd::List {
@@ -452,6 +642,92 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 project,
             } => cmd_comment_delete(&client, &issue, project.as_deref(), &comment_id).await,
         },
+        Command::Label { command } => match command {
+            LabelCmd::List { project } => {
+                cmd_label_list(&client, project.as_deref(), cli.json).await
+            }
+            LabelCmd::Show { label, project } => {
+                cmd_label_show(&client, &label, project.as_deref(), cli.json).await
+            }
+            LabelCmd::Create {
+                name,
+                project,
+                color,
+            } => {
+                cmd_label_create(
+                    &client,
+                    &name,
+                    project.as_deref(),
+                    color.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            LabelCmd::Update {
+                label,
+                project,
+                name,
+                color,
+            } => {
+                cmd_label_update(
+                    &client,
+                    &label,
+                    project.as_deref(),
+                    name.as_deref(),
+                    color.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            LabelCmd::Delete { label, project } => {
+                cmd_label_delete(&client, &label, project.as_deref()).await
+            }
+        },
+        Command::State { command } => match command {
+            StateCmd::List { project } => {
+                cmd_state_list(&client, project.as_deref(), cli.json).await
+            }
+            StateCmd::Show { state, project } => {
+                cmd_state_show(&client, &state, project.as_deref(), cli.json).await
+            }
+            StateCmd::Create {
+                name,
+                project,
+                group,
+                color,
+            } => {
+                cmd_state_create(
+                    &client,
+                    &name,
+                    project.as_deref(),
+                    group.as_deref(),
+                    color.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            StateCmd::Update {
+                state,
+                project,
+                name,
+                group,
+                color,
+            } => {
+                cmd_state_update(
+                    &client,
+                    &state,
+                    project.as_deref(),
+                    name.as_deref(),
+                    group.as_deref(),
+                    color.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            StateCmd::Delete { state, project } => {
+                cmd_state_delete(&client, &state, project.as_deref()).await
+            }
+        },
         Command::User { command } => match command {
             UserCmd::List => cmd_user_list(&client, cli.json).await,
         },
@@ -530,6 +806,105 @@ async fn cmd_project_list(
         output_table(&["ID", "Name", "Identifier", "Created"], &rows);
     }
     Ok(())
+}
+
+/// Print a single project: JSON to stdout, or a Field/Value table to stderr.
+fn output_project_view(project: &Project, json: bool) {
+    if json {
+        output_json(project);
+        return;
+    }
+    let rows = vec![
+        vec!["id".to_string(), project.id.clone()],
+        vec![
+            "identifier".to_string(),
+            project.identifier.clone().unwrap_or_default(),
+        ],
+        vec!["name".to_string(), project.name.clone().unwrap_or_default()],
+        vec![
+            "description".to_string(),
+            project.description.clone().unwrap_or_default(),
+        ],
+        vec![
+            "created_at".to_string(),
+            project.created_at.clone().unwrap_or_default(),
+        ],
+        vec![
+            "updated_at".to_string(),
+            project.updated_at.clone().unwrap_or_default(),
+        ],
+    ];
+    output_table(&["Field", "Value"], &rows);
+}
+
+async fn cmd_project_show(
+    client: &PlaneClient,
+    project: &str,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let project = resolve_project(project, client).await?;
+    output_project_view(&project, json);
+    Ok(())
+}
+
+async fn cmd_project_create(
+    client: &PlaneClient,
+    name: &str,
+    identifier: Option<&str>,
+    description: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    // The Plane API requires an identifier on create; mirror the Python CLI's
+    // default of the first three name characters uppercased when `-i` is absent.
+    let identifier = normalize_identifier(identifier)
+        .unwrap_or_else(|| name.chars().take(3).collect::<String>().to_uppercase());
+    let write = ProjectWrite {
+        name: Some(name.to_string()),
+        identifier: Some(identifier),
+        description: description.map(str::to_string),
+    };
+    let created = client.create_project(&write).await?;
+    output_project_view(&created, json);
+    Ok(())
+}
+
+async fn cmd_project_update(
+    client: &PlaneClient,
+    project: &str,
+    name: Option<&str>,
+    identifier: Option<&str>,
+    description: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let resolved = resolve_project(project, client).await?;
+    let mut write = ProjectWrite::default();
+    if let Some(name) = name {
+        write.name = Some(name.to_string());
+    }
+    if let Some(identifier) = normalize_identifier(identifier) {
+        write.identifier = Some(identifier);
+    }
+    if let Some(description) = description {
+        write.description = Some(description.to_string());
+    }
+    let updated = client.update_project(&resolved.id, &write).await?;
+    output_project_view(&updated, json);
+    Ok(())
+}
+
+async fn cmd_project_delete(client: &PlaneClient, project: &str) -> Result<(), PlaneError> {
+    let resolved = resolve_project(project, client).await?;
+    let name = resolved.name.clone().unwrap_or_else(|| resolved.id.clone());
+    client.delete_project(&resolved.id).await?;
+    eprintln!("Project '{name}' deleted.");
+    Ok(())
+}
+
+/// Uppercase a user-supplied project identifier; None/empty means "not given".
+fn normalize_identifier(identifier: Option<&str>) -> Option<String> {
+    identifier
+        .filter(|i| !i.is_empty())
+        .map(|i| i.to_uppercase())
 }
 
 /// Options for `wi ls` (grouped to keep the handler signature small).
@@ -1476,6 +1851,336 @@ async fn cmd_user_list(client: &PlaneClient, json: bool) -> Result<(), PlaneErro
             .collect();
         output_table(&["ID", "Name", "Email"], &rows);
     }
+    Ok(())
+}
+
+/// Resolve the `-p` flag shared by every project-scoped command; the same
+/// Validation error `wi create` raises when the project is missing.
+async fn require_project(
+    client: &PlaneClient,
+    project: Option<&str>,
+) -> Result<Project, PlaneError> {
+    let project = project.ok_or_else(|| PlaneError::Validation {
+        message: "Project is required for this command.".into(),
+        hint: Some("Use -p/--project <name-or-id> to specify the project.".into()),
+    })?;
+    resolve_project(project, client).await
+}
+
+/// Resolve a label by UUID or fuzzy name against a project's labels.
+async fn resolve_label(
+    client: &PlaneClient,
+    project_id: &str,
+    query: &str,
+) -> Result<Label, PlaneError> {
+    let labels = client.list_labels(project_id).await?;
+    let found = if planebotcli_resolve::is_uuid(query) {
+        labels.iter().find(|l| l.id.eq_ignore_ascii_case(query))
+    } else {
+        planebotcli_resolve::find_best_match(query, &labels, |l| l.name.as_deref().unwrap_or(""))
+            .map(|m| m.item)
+    };
+    match found {
+        Some(label) => Ok(label.clone()),
+        None => Err(PlaneError::NotFound {
+            message: format!("Label not found: {query}"),
+        }),
+    }
+}
+
+/// Resolve a state by UUID or fuzzy name against a project's states.
+async fn resolve_state(
+    client: &PlaneClient,
+    project_id: &str,
+    query: &str,
+) -> Result<State, PlaneError> {
+    let states = client.list_states(project_id).await?;
+    let found = if planebotcli_resolve::is_uuid(query) {
+        states.iter().find(|s| s.id.eq_ignore_ascii_case(query))
+    } else {
+        planebotcli_resolve::find_best_match(query, &states, |s| s.name.as_deref().unwrap_or(""))
+            .map(|m| m.item)
+    };
+    match found {
+        Some(state) => Ok(state.clone()),
+        None => Err(PlaneError::NotFound {
+            message: format!("State not found: {query}"),
+        }),
+    }
+}
+
+/// Valid state group values (Plane's built-in groups).
+const STATE_GROUPS: [&str; 5] = ["backlog", "unstarted", "started", "completed", "cancelled"];
+
+/// Validate a `--group` flag; returns the canonical lowercased value.
+fn validate_group(value: Option<&str>) -> Result<Option<String>, PlaneError> {
+    let Some(value) = value else { return Ok(None) };
+    let trimmed = value.trim().to_lowercase();
+    if !STATE_GROUPS.contains(&trimmed.as_str()) {
+        return Err(PlaneError::Validation {
+            message: format!("Invalid state group: {value:?}"),
+            hint: Some(format!("Valid values: {}.", STATE_GROUPS.join(", "))),
+        });
+    }
+    Ok(Some(trimmed))
+}
+
+/// Print a single label: JSON to stdout, or a Field/Value table to stderr.
+fn output_label_view(label: &Label, json: bool) {
+    if json {
+        output_json(label);
+        return;
+    }
+    let rows = vec![
+        vec!["id".to_string(), label.id.clone()],
+        vec!["name".to_string(), label.name.clone().unwrap_or_default()],
+        vec!["color".to_string(), label.color.clone().unwrap_or_default()],
+        vec![
+            "description".to_string(),
+            label.description.clone().unwrap_or_default(),
+        ],
+        vec![
+            "parent".to_string(),
+            label.parent.clone().unwrap_or_default(),
+        ],
+        vec![
+            "created_at".to_string(),
+            label.created_at.clone().unwrap_or_default(),
+        ],
+    ];
+    output_table(&["Field", "Value"], &rows);
+}
+
+/// Print a single state: JSON to stdout, or a Field/Value table to stderr.
+fn output_state_view(state: &State, json: bool) {
+    if json {
+        output_json(state);
+        return;
+    }
+    let sequence = state
+        .sequence
+        .as_ref()
+        .map(|v| match v {
+            Value::Number(n) => n.to_string(),
+            Value::String(s) => s.clone(),
+            _ => String::new(),
+        })
+        .unwrap_or_default();
+    let rows = vec![
+        vec!["id".to_string(), state.id.clone()],
+        vec!["name".to_string(), state.name.clone().unwrap_or_default()],
+        vec!["group".to_string(), state.group.clone().unwrap_or_default()],
+        vec!["color".to_string(), state.color.clone().unwrap_or_default()],
+        vec!["sequence".to_string(), sequence],
+        vec![
+            "created_at".to_string(),
+            state.created_at.clone().unwrap_or_default(),
+        ],
+    ];
+    output_table(&["Field", "Value"], &rows);
+}
+
+async fn cmd_label_list(
+    client: &PlaneClient,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let labels = client.list_labels(&proj.id).await?;
+    if json {
+        output_json(&labels);
+    } else {
+        let rows: Vec<Vec<String>> = labels
+            .iter()
+            .map(|l| {
+                vec![
+                    l.id.clone(),
+                    l.name.clone().unwrap_or_default(),
+                    l.color.clone().unwrap_or_default(),
+                    l.description.clone().unwrap_or_default(),
+                ]
+            })
+            .collect();
+        output_table(&["ID", "Name", "Color", "Description"], &rows);
+    }
+    Ok(())
+}
+
+async fn cmd_label_show(
+    client: &PlaneClient,
+    label: &str,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let label = resolve_label(client, &proj.id, label).await?;
+    output_label_view(&label, json);
+    Ok(())
+}
+
+async fn cmd_label_create(
+    client: &PlaneClient,
+    name: &str,
+    project: Option<&str>,
+    color: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let mut write = LabelWrite {
+        name: Some(name.to_string()),
+        ..Default::default()
+    };
+    if let Some(color) = color {
+        write.color = Some(color.to_string());
+    }
+    let created = client.create_label(&proj.id, &write).await?;
+    output_label_view(&created, json);
+    Ok(())
+}
+
+async fn cmd_label_update(
+    client: &PlaneClient,
+    label: &str,
+    project: Option<&str>,
+    name: Option<&str>,
+    color: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let found = resolve_label(client, &proj.id, label).await?;
+    let mut write = LabelWrite::default();
+    if let Some(name) = name {
+        write.name = Some(name.to_string());
+    }
+    if let Some(color) = color {
+        write.color = Some(color.to_string());
+    }
+    let updated = client.update_label(&proj.id, &found.id, &write).await?;
+    output_label_view(&updated, json);
+    Ok(())
+}
+
+async fn cmd_label_delete(
+    client: &PlaneClient,
+    label: &str,
+    project: Option<&str>,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let found = resolve_label(client, &proj.id, label).await?;
+    let name = found.name.clone().unwrap_or_else(|| found.id.clone());
+    client.delete_label(&proj.id, &found.id).await?;
+    eprintln!("Label '{name}' deleted.");
+    Ok(())
+}
+
+async fn cmd_state_list(
+    client: &PlaneClient,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let states = client.list_states(&proj.id).await?;
+    if json {
+        output_json(&states);
+    } else {
+        let rows: Vec<Vec<String>> = states
+            .iter()
+            .map(|s| {
+                let sequence = s
+                    .sequence
+                    .as_ref()
+                    .map(|v| match v {
+                        Value::Number(n) => n.to_string(),
+                        Value::String(s) => s.clone(),
+                        _ => String::new(),
+                    })
+                    .unwrap_or_default();
+                vec![
+                    s.id.clone(),
+                    s.name.clone().unwrap_or_default(),
+                    s.color.clone().unwrap_or_default(),
+                    s.group.clone().unwrap_or_default(),
+                    sequence,
+                ]
+            })
+            .collect();
+        output_table(&["ID", "Name", "Color", "Group", "Sequence"], &rows);
+    }
+    Ok(())
+}
+
+async fn cmd_state_show(
+    client: &PlaneClient,
+    state: &str,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let state = resolve_state(client, &proj.id, state).await?;
+    output_state_view(&state, json);
+    Ok(())
+}
+
+async fn cmd_state_create(
+    client: &PlaneClient,
+    name: &str,
+    project: Option<&str>,
+    group: Option<&str>,
+    color: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let group = validate_group(group)?;
+    let mut write = StateWrite {
+        name: Some(name.to_string()),
+        color: Some(color.unwrap_or("#000000").to_string()),
+        ..Default::default()
+    };
+    if let Some(group) = group {
+        write.group = Some(group);
+    }
+    let created = client.create_state(&proj.id, &write).await?;
+    output_state_view(&created, json);
+    Ok(())
+}
+
+async fn cmd_state_update(
+    client: &PlaneClient,
+    state: &str,
+    project: Option<&str>,
+    name: Option<&str>,
+    group: Option<&str>,
+    color: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let found = resolve_state(client, &proj.id, state).await?;
+    let group = validate_group(group)?;
+    let mut write = StateWrite::default();
+    if let Some(name) = name {
+        write.name = Some(name.to_string());
+    }
+    if let Some(group) = group {
+        write.group = Some(group);
+    }
+    if let Some(color) = color {
+        write.color = Some(color.to_string());
+    }
+    let updated = client.update_state(&proj.id, &found.id, &write).await?;
+    output_state_view(&updated, json);
+    Ok(())
+}
+
+async fn cmd_state_delete(
+    client: &PlaneClient,
+    state: &str,
+    project: Option<&str>,
+) -> Result<(), PlaneError> {
+    let proj = require_project(client, project).await?;
+    let found = resolve_state(client, &proj.id, state).await?;
+    let name = found.name.clone().unwrap_or_else(|| found.id.clone());
+    client.delete_state(&proj.id, &found.id).await?;
+    eprintln!("State '{name}' deleted.");
     Ok(())
 }
 

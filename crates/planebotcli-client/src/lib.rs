@@ -252,8 +252,42 @@ impl PlaneClient {
             "/api/v1/workspaces/{}/projects/{}/labels/",
             self.workspace, project_id
         );
-        self.request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
-            .await
+        let result = self
+            .request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("labels:{}:{}", self.workspace, project_id));
+        result
+    }
+
+    /// `PATCH /api/v1/workspaces/{ws}/projects/{pid}/labels/{id}/`
+    pub async fn update_label(
+        &self,
+        project_id: &str,
+        label_id: &str,
+        body: &LabelWrite,
+    ) -> Result<Label, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/labels/{}",
+            self.workspace, project_id, label_id
+        );
+        let result = self
+            .request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("labels:{}:{}", self.workspace, project_id));
+        result
+    }
+
+    /// `DELETE /api/v1/workspaces/{ws}/projects/{pid}/labels/{id}/`
+    pub async fn delete_label(&self, project_id: &str, label_id: &str) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/labels/{}",
+            self.workspace, project_id, label_id
+        );
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::DELETE, &path, &[], None)
+            .await?;
+        self.invalidate(&format!("labels:{}:{}", self.workspace, project_id));
+        Ok(())
     }
 
     /// `GET /api/v1/workspaces/{ws}/projects/{pid}/states/` (cached).
@@ -277,8 +311,42 @@ impl PlaneClient {
             "/api/v1/workspaces/{}/projects/{}/states/",
             self.workspace, project_id
         );
-        self.request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
-            .await
+        let result = self
+            .request_json(reqwest::Method::POST, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("states:{}:{}", self.workspace, project_id));
+        result
+    }
+
+    /// `PATCH /api/v1/workspaces/{ws}/projects/{pid}/states/{id}/`
+    pub async fn update_state(
+        &self,
+        project_id: &str,
+        state_id: &str,
+        body: &StateWrite,
+    ) -> Result<State, PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/states/{}",
+            self.workspace, project_id, state_id
+        );
+        let result = self
+            .request_json(reqwest::Method::PATCH, &path, &[], Some(&body_json(body)?))
+            .await;
+        self.invalidate(&format!("states:{}:{}", self.workspace, project_id));
+        result
+    }
+
+    /// `DELETE /api/v1/workspaces/{ws}/projects/{pid}/states/{id}/`
+    pub async fn delete_state(&self, project_id: &str, state_id: &str) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/states/{}",
+            self.workspace, project_id, state_id
+        );
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::DELETE, &path, &[], None)
+            .await?;
+        self.invalidate(&format!("states:{}:{}", self.workspace, project_id));
+        Ok(())
     }
 
     /// `GET /api/v1/workspaces/{ws}/projects/{pid}/work-items/` — all pages (cached).

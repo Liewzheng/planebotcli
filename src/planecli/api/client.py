@@ -45,6 +45,37 @@ def get_workspace() -> str:
     return config.workspace
 
 
+_SENSITIVE_BODY_KEYS = {"api_key", "authorization", "token", "access_token", "password"}
+
+
+def _response_error_detail(response: object | None) -> str | None:
+    """Extract human-readable error details from an SDK error response body.
+
+    The plane-sdk attaches the parsed JSON body (or raw text) of a failed
+    response to HttpError.response. Field-level errors look like
+    {"description": ["This field is required."]}; DRF-style bodies carry a
+    top-level "detail" string. Returns None when nothing useful is there.
+    """
+    if isinstance(response, dict):
+        parts: list[str] = []
+        detail = response.get("detail")
+        if isinstance(detail, str) and detail.strip():
+            parts.append(detail.strip())
+        for key, value in response.items():
+            if key == "detail" or key.lower() in _SENSITIVE_BODY_KEYS:
+                continue
+            if isinstance(value, list):
+                messages = [str(item).strip() for item in value if str(item).strip()]
+                if messages:
+                    parts.append(f"{key}: {'; '.join(messages)}")
+            elif isinstance(value, str) and value.strip():
+                parts.append(f"{key}: {value.strip()}")
+        return " | ".join(parts) if parts else None
+    if isinstance(response, str) and response.strip():
+        return response.strip()[:200]
+    return None
+
+
 def handle_api_error(err: PlaneError) -> PlaneCLIError:
     """Convert a Plane SDK error to a PlaneCLI error."""
     if isinstance(err, HttpError):
@@ -55,5 +86,9 @@ def handle_api_error(err: PlaneError) -> PlaneCLIError:
                 "Rate limited by Plane API after multiple retries. Try again later.",
                 status_code=429,
             )
-        return APIError(str(err), status_code=err.status_code)
+        message = str(err)
+        detail = _response_error_detail(err.response)
+        if detail:
+            message = f"{message} — {detail}"
+        return APIError(message, status_code=err.status_code)
     return APIError(str(err))

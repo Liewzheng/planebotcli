@@ -9,11 +9,15 @@ from plane.errors import HttpError
 from tenacity import wait_none
 
 from planecli.api.async_sdk import run_sdk
+from planecli.api.client import handle_api_error
+from planecli.exceptions import APIError, AuthenticationError
 from planecli.utils.resolve import _fetch_page, _paginate_all
 
 
-def _make_http_error(status_code: int, message: str = "") -> HttpError:
-    return HttpError(message or f"HTTP {status_code}", status_code=status_code)
+def _make_http_error(
+    status_code: int, message: str = "", response: object | None = None
+) -> HttpError:
+    return HttpError(message or f"HTTP {status_code}", status_code=status_code, response=response)
 
 
 @pytest.fixture(autouse=True)
@@ -93,6 +97,68 @@ class TestRunSdkRetry:
         result = await run_sdk(fn)
         assert result == "result"
         assert fn.call_count == 1
+
+
+class TestHandleApiError:
+    """Test that handle_api_error surfaces status and response body details."""
+
+    def test_message_includes_status_and_field_errors(self):
+        err = _make_http_error(
+            400,
+            "HTTP 400: Bad Request",
+            response={"description": ["This field is required."]},
+        )
+        result = handle_api_error(err)
+        assert isinstance(result, APIError)
+        assert result.exit_code == 4
+        assert "HTTP 400" in result.message
+        assert "description: This field is required." in result.message
+
+    def test_multiple_field_errors_joined(self):
+        err = _make_http_error(
+            400,
+            response={
+                "name": ["This field is required."],
+                "labels": ["Invalid pk", "Not found"],
+            },
+        )
+        result = handle_api_error(err)
+        assert "name: This field is required." in result.message
+        assert "labels: Invalid pk; Not found" in result.message
+
+    def test_detail_key_rendered(self):
+        err = _make_http_error(403, "HTTP 403: Forbidden", response={"detail": "Not allowed."})
+        result = handle_api_error(err)
+        assert "HTTP 403" in result.message
+        assert "Not allowed." in result.message
+
+    def test_sensitive_body_keys_never_included(self):
+        err = _make_http_error(
+            400,
+            response={"api_key": ["leaked"], "authorization": "Bearer secret"},
+        )
+        result = handle_api_error(err)
+        assert "leaked" not in result.message
+        assert "secret" not in result.message
+
+    def test_no_response_body_keeps_plain_message(self):
+        err = _make_http_error(404, "HTTP 404: Not Found")
+        result = handle_api_error(err)
+        assert result.message == "API error (HTTP 404): HTTP 404: Not Found"
+
+    def test_text_response_body_truncated(self):
+        body = "<html>" + "x" * 500
+        err = _make_http_error(500, "HTTP 500: Internal Server Error", response=body)
+        result = handle_api_error(err)
+        assert "API error (HTTP 500)" in result.message
+        assert "xxxx" in result.message
+        assert "x" * 250 not in result.message
+
+    def test_401_still_maps_to_authentication_error(self):
+        err = _make_http_error(401, "HTTP 401: Unauthorized", response={"detail": "nope"})
+        result = handle_api_error(err)
+        assert isinstance(result, AuthenticationError)
+        assert result.exit_code == 2
 
 
 class TestPaginateAllRetry:

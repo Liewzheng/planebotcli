@@ -13,7 +13,7 @@ use planebotcli_format::{output_json, output_table};
 use planebotcli_resolve::{
     locate_work_item_across, locate_work_item_in_project, resolve_project, resolve_user_query,
 };
-use planebotcli_types::{CommentWrite, Project, WorkItem};
+use planebotcli_types::{CommentWrite, Project, WorkItem, WorkItemWrite};
 use render::{Lookups, comment_json, work_item_view};
 use serde_json::Value;
 
@@ -160,6 +160,73 @@ pub enum WiCmd {
         #[arg(long)]
         no_comments: bool,
     },
+    /// Create a new work item.
+    Create {
+        /// Work item title.
+        title: String,
+        /// Project name, identifier, or UUID (required).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// Assignee name, email, or 'me'.
+        #[arg(long, visible_alias = "assign")]
+        assignee: Option<String>,
+        /// State name (e.g. 'Todo', 'In Progress').
+        #[arg(long)]
+        state: Option<String>,
+        /// Comma-separated label names.
+        #[arg(long)]
+        labels: Option<String>,
+        /// Priority: urgent, high, medium, low, none (or 0-4).
+        #[arg(long)]
+        priority: Option<String>,
+        /// Parent work item identifier (ABC-123) for creating sub-issues.
+        #[arg(long)]
+        parent: Option<String>,
+        /// Work item description (plain text, wrapped in a paragraph).
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+        /// Start date (YYYY-MM-DD).
+        #[arg(long)]
+        start_date: Option<String>,
+        /// Target end date (YYYY-MM-DD).
+        #[arg(long)]
+        target_date: Option<String>,
+    },
+    /// Update a work item.
+    Update {
+        /// Work item identifier (ABC-123), UUID, or name.
+        issue: String,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+        /// New state name.
+        #[arg(long)]
+        state: Option<String>,
+        /// New priority: urgent, high, medium, low, none.
+        #[arg(long)]
+        priority: Option<String>,
+        /// New assignee name or 'me'.
+        #[arg(long, visible_alias = "assign")]
+        assignee: Option<String>,
+        /// Comma-separated labels to set.
+        #[arg(long)]
+        labels: Option<String>,
+        /// Remove all labels.
+        #[arg(long)]
+        clear_labels: bool,
+        /// New title.
+        #[arg(long)]
+        name: Option<String>,
+        /// New description (plain text, wrapped in a paragraph).
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+        /// New start date (YYYY-MM-DD).
+        #[arg(long)]
+        start_date: Option<String>,
+        /// New target end date (YYYY-MM-DD).
+        #[arg(long)]
+        target_date: Option<String>,
+    },
 }
 
 /// Run the parsed CLI and return the first error (mapped to an exit code).
@@ -207,6 +274,58 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     cli.json,
                 )
                 .await
+            }
+            WiCmd::Create {
+                title,
+                project,
+                assignee,
+                state,
+                labels,
+                priority,
+                parent,
+                description,
+                start_date,
+                target_date,
+            } => {
+                let opts = CreateOpts {
+                    project: project.as_deref(),
+                    assignee: assignee.as_deref(),
+                    state: state.as_deref(),
+                    labels: labels.as_deref(),
+                    priority: priority.as_deref(),
+                    parent: parent.as_deref(),
+                    description: description.as_deref(),
+                    start_date: start_date.as_deref(),
+                    target_date: target_date.as_deref(),
+                };
+                cmd_wi_create(&client, &cfg.base_url, &title, &opts, cli.json).await
+            }
+            WiCmd::Update {
+                issue,
+                project,
+                state,
+                priority,
+                assignee,
+                labels,
+                clear_labels,
+                name,
+                description,
+                start_date,
+                target_date,
+            } => {
+                let opts = UpdateOpts {
+                    project: project.as_deref(),
+                    state: state.as_deref(),
+                    priority: priority.as_deref(),
+                    assignee: assignee.as_deref(),
+                    labels: labels.as_deref(),
+                    clear_labels,
+                    name: name.as_deref(),
+                    description: description.as_deref(),
+                    start_date: start_date.as_deref(),
+                    target_date: target_date.as_deref(),
+                };
+                cmd_wi_update(&client, &cfg.base_url, &issue, &opts, cli.json).await
             }
         },
         Command::Comment { command } => match command {
@@ -627,6 +746,359 @@ async fn cmd_wi_show(
     Ok(())
 }
 
+/// Options for `wi create` (grouped to keep handler signatures small).
+struct CreateOpts<'a> {
+    project: Option<&'a str>,
+    assignee: Option<&'a str>,
+    state: Option<&'a str>,
+    labels: Option<&'a str>,
+    priority: Option<&'a str>,
+    parent: Option<&'a str>,
+    description: Option<&'a str>,
+    start_date: Option<&'a str>,
+    target_date: Option<&'a str>,
+}
+
+/// Options for `wi update`.
+struct UpdateOpts<'a> {
+    project: Option<&'a str>,
+    state: Option<&'a str>,
+    priority: Option<&'a str>,
+    assignee: Option<&'a str>,
+    labels: Option<&'a str>,
+    clear_labels: bool,
+    name: Option<&'a str>,
+    description: Option<&'a str>,
+    start_date: Option<&'a str>,
+    target_date: Option<&'a str>,
+}
+
+/// Validate a YYYY-MM-DD date flag; None passes through.
+fn validate_date(value: Option<&str>, flag: &str) -> Result<Option<String>, PlaneError> {
+    let Some(value) = value else { return Ok(None) };
+    let ok = value.len() == 10
+        && value.as_bytes()[4] == b'-'
+        && value.as_bytes()[7] == b'-'
+        && value[..4].chars().all(|c| c.is_ascii_digit())
+        && value[5..7].chars().all(|c| c.is_ascii_digit())
+        && value[8..10].chars().all(|c| c.is_ascii_digit());
+    if !ok {
+        return Err(PlaneError::Validation {
+            message: format!("Invalid date for {flag}: {value:?} (expected YYYY-MM-DD)."),
+            hint: Some(format!("Example: {flag} 2026-09-15")),
+        });
+    }
+    Ok(Some(value.to_string()))
+}
+
+/// Normalize and validate a priority (word or 0-4); error lists valid options.
+fn normalize_priority(raw: Option<&str>) -> Result<Option<String>, PlaneError> {
+    let Some(raw) = raw else { return Ok(None) };
+    let canonical = match raw.trim().to_lowercase().as_str() {
+        "0" | "none" => "none",
+        "1" | "urgent" => "urgent",
+        "2" | "high" => "high",
+        "3" | "medium" => "medium",
+        "4" | "low" => "low",
+        other => {
+            return Err(PlaneError::Validation {
+                message: format!("Invalid priority: {other:?}"),
+                hint: Some("Valid values: urgent, high, medium, low, none (or 1-4, 0).".into()),
+            });
+        }
+    };
+    Ok(Some(canonical.to_string()))
+}
+
+/// Check `--state`/`--labels` against the project and resolve them to ids,
+/// mirroring the Python write-before validation: a missing name fails with the
+/// available list instead of a bare not-found error.
+async fn resolve_state_label_ids(
+    client: &PlaneClient,
+    project_id: &str,
+    state: Option<&str>,
+    labels: Option<&str>,
+) -> Result<(Option<String>, Vec<String>), PlaneError> {
+    let available_states = client.list_states(project_id).await?;
+    let available_labels = client.list_labels(project_id).await?;
+    let project_identifier = client
+        .get_project(project_id)
+        .await?
+        .identifier
+        .unwrap_or_else(|| project_id.to_string());
+
+    let state_id = match state {
+        Some(query) if !query.trim().is_empty() => {
+            let query = query.trim();
+            let found = if planebotcli_resolve::is_uuid(query) {
+                available_states.iter().find(|s| s.id == query)
+            } else {
+                planebotcli_resolve::find_best_match(query, &available_states, |s| {
+                    s.name.as_deref().unwrap_or("")
+                })
+                .map(|m| m.item)
+            };
+            match found {
+                Some(s) => Some(s.id.clone()),
+                None => {
+                    let names: Vec<&str> = available_states
+                        .iter()
+                        .filter_map(|s| s.name.as_deref())
+                        .collect();
+                    return Err(PlaneError::Validation {
+                        message: format!(
+                            "State '{query}' not found in project {project_identifier}. Available: {}",
+                            names.join(", ")
+                        ),
+                        hint: None,
+                    });
+                }
+            }
+        }
+        _ => None,
+    };
+
+    let mut label_ids = Vec::new();
+    if let Some(labels) = labels {
+        for raw in labels.split(',') {
+            let name = raw.trim();
+            if name.is_empty() {
+                continue;
+            }
+            let found = if planebotcli_resolve::is_uuid(name) {
+                available_labels.iter().find(|l| l.id == name)
+            } else {
+                planebotcli_resolve::find_best_match(name, &available_labels, |l| {
+                    l.name.as_deref().unwrap_or("")
+                })
+                .map(|m| m.item)
+            };
+            match found {
+                Some(l) => label_ids.push(l.id.clone()),
+                None => {
+                    let names: Vec<&str> = available_labels
+                        .iter()
+                        .filter_map(|l| l.name.as_deref())
+                        .collect();
+                    return Err(PlaneError::Validation {
+                        message: format!(
+                            "Label '{name}' not found in project {project_identifier}. Available: {}",
+                            names.join(", ")
+                        ),
+                        hint: None,
+                    });
+                }
+            }
+        }
+    }
+    Ok((state_id, label_ids))
+}
+
+async fn cmd_wi_create(
+    client: &PlaneClient,
+    base_url: &str,
+    title: &str,
+    opts: &CreateOpts<'_>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let project = opts.project.ok_or_else(|| PlaneError::Validation {
+        message: "Project is required for this command.".into(),
+        hint: Some("Use -p/--project <name-or-id> to specify the project.".into()),
+    })?;
+    let proj = resolve_project(project, client).await?;
+    let project_id = proj.id.clone();
+    let project_identifier = proj.identifier.clone().unwrap_or_default();
+
+    let start_date = validate_date(opts.start_date, "--start-date")?;
+    let target_date = validate_date(opts.target_date, "--target-date")?;
+    let priority = normalize_priority(opts.priority)?;
+    let (state_id, label_ids) =
+        resolve_state_label_ids(client, &project_id, opts.state, opts.labels).await?;
+
+    let mut write = WorkItemWrite {
+        name: Some(title.to_string()),
+        ..Default::default()
+    };
+    if let Some(description) = opts.description {
+        write.description_html = Some(format!("<p>{description}</p>"));
+    }
+    if let Some(p) = priority {
+        write.priority = Some(p);
+    }
+    if let Some(state) = state_id {
+        write.state = Some(state);
+    }
+    if opts.labels.is_some() {
+        write.labels = Some(label_ids);
+    }
+    if let Some(assignee) = opts.assignee {
+        let (user_id, _) = resolve_user_query(assignee, client).await?;
+        write.assignees = Some(vec![user_id]);
+    }
+    if let Some(parent) = opts.parent {
+        let located = locate_work_item_in_project(parent, &proj, client).await?;
+        write.parent = Some(located.item.id);
+    }
+    if let Some(d) = start_date {
+        write.start_date = Some(d);
+    }
+    if let Some(d) = target_date {
+        write.target_date = Some(d);
+    }
+
+    let created = client.create_work_item(&project_id, &write).await?;
+    output_work_item_view(
+        client,
+        base_url,
+        &created,
+        &project_identifier,
+        json,
+        "Work Item Created",
+    )
+    .await
+}
+
+async fn cmd_wi_update(
+    client: &PlaneClient,
+    base_url: &str,
+    issue: &str,
+    opts: &UpdateOpts<'_>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let located = locate_issue(client, issue, opts.project).await?;
+    let project_id = located.project_id.clone();
+    let project_identifier = located.project_identifier.clone();
+
+    let start_date = validate_date(opts.start_date, "--start-date")?;
+    let target_date = validate_date(opts.target_date, "--target-date")?;
+    let priority = normalize_priority(opts.priority)?;
+    let labels_query = if opts.clear_labels { None } else { opts.labels };
+    let (state_id, label_ids) =
+        resolve_state_label_ids(client, &project_id, opts.state, labels_query).await?;
+
+    let mut write = WorkItemWrite::default();
+    if let Some(name) = opts.name {
+        write.name = Some(name.to_string());
+    }
+    if let Some(description) = opts.description {
+        write.description_html = Some(format!("<p>{description}</p>"));
+    }
+    if let Some(p) = priority {
+        write.priority = Some(p);
+    }
+    if let Some(state) = state_id {
+        write.state = Some(state);
+    }
+    if let Some(assignee) = opts.assignee {
+        let (user_id, _) = resolve_user_query(assignee, client).await?;
+        write.assignees = Some(vec![user_id]);
+    }
+    if opts.labels.is_some() || opts.clear_labels {
+        write.labels = Some(label_ids);
+    }
+    if let Some(d) = start_date.as_ref() {
+        write.start_date = Some(d.clone());
+    }
+    if let Some(d) = target_date.as_ref() {
+        write.target_date = Some(d.clone());
+    }
+
+    let updated = client
+        .update_work_item(&project_id, &located.item.id, &write)
+        .await?;
+
+    // Read-back verification (ADR-0007): the API can answer 200 while ignoring
+    // date fields; confirm the server applied what we asked.
+    for (flag, asked, got) in [
+        ("--start-date", start_date, updated.start_date.clone()),
+        ("--target-date", target_date, updated.target_date.clone()),
+    ] {
+        if let Some(asked) = asked
+            && got.as_deref() != Some(asked.as_str())
+        {
+            return Err(PlaneError::Api {
+                message: format!("The server did not apply {flag}: asked {asked:?}, got {got:?}."),
+            });
+        }
+    }
+
+    output_work_item_view(
+        client,
+        base_url,
+        &updated,
+        &project_identifier,
+        json,
+        "Work Item Updated",
+    )
+    .await
+}
+
+/// Enrich and print a freshly written work item (maps fetched for names).
+async fn output_work_item_view(
+    client: &PlaneClient,
+    base_url: &str,
+    item: &planebotcli_types::WorkItem,
+    project_identifier: &str,
+    json: bool,
+    _title: &str,
+) -> Result<(), PlaneError> {
+    let workspace = client.workspace().to_string();
+    let states = client
+        .list_states(item.project.as_deref().unwrap_or(""))
+        .await?;
+    let labels_list = client
+        .list_labels(item.project.as_deref().unwrap_or(""))
+        .await?;
+    let members = client.list_members().await?;
+    let state_map: HashMap<String, String> = states
+        .into_iter()
+        .map(|s| (s.id, s.name.unwrap_or_default()))
+        .collect();
+    let label_map: HashMap<String, String> = labels_list
+        .into_iter()
+        .map(|l| (l.id, l.name.unwrap_or_default()))
+        .collect();
+    let member_map: HashMap<String, String> = members
+        .into_iter()
+        .map(|m| {
+            let name = m.full_name();
+            (m.id, name)
+        })
+        .collect();
+    let lookups = Lookups {
+        state_map,
+        label_map,
+        member_map,
+    };
+    let view = work_item_view(item, project_identifier, &lookups, base_url, &workspace);
+    if json {
+        output_json(&view);
+    } else {
+        let fields: Vec<(&str, &str)> = vec![
+            ("id", "UUID"),
+            ("sequence_id", "Sequence ID"),
+            ("name", "Title"),
+            ("priority", "Priority"),
+            ("state_detail_name", "State"),
+            ("assignee_names", "Assignees"),
+            ("label_names", "Labels"),
+            ("start_date", "Start Date"),
+            ("target_date", "Target Date"),
+        ];
+        let rows: Vec<Vec<String>> = fields
+            .iter()
+            .map(|(key, _)| {
+                vec![
+                    key.to_string(),
+                    view[key].as_str().unwrap_or("").to_string(),
+                ]
+            })
+            .collect();
+        output_table(&["Field", "Value"], &rows);
+    }
+    Ok(())
+}
+
 /// Locate a work item reference, project-scoped when `-p` is given.
 async fn locate_issue(
     client: &PlaneClient,
@@ -806,5 +1278,41 @@ fn fmt_ts(s: &str) -> String {
         s[..19].replace('T', " ")
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn date_validation() {
+        assert_eq!(
+            validate_date(Some("2026-09-15"), "--target-date")
+                .unwrap()
+                .as_deref(),
+            Some("2026-09-15")
+        );
+        assert!(validate_date(None, "--target-date").unwrap().is_none());
+        assert!(validate_date(Some("2026/09/15"), "--target-date").is_err());
+        assert!(validate_date(Some("15-09-2026"), "--target-date").is_err());
+    }
+
+    #[test]
+    fn priority_normalization() {
+        assert_eq!(
+            normalize_priority(Some("urgent")).unwrap().as_deref(),
+            Some("urgent")
+        );
+        assert_eq!(
+            normalize_priority(Some("2")).unwrap().as_deref(),
+            Some("high")
+        );
+        assert_eq!(
+            normalize_priority(Some("none")).unwrap().as_deref(),
+            Some("none")
+        );
+        assert_eq!(normalize_priority(None).unwrap(), None);
+        assert!(normalize_priority(Some("bogus")).is_err());
     }
 }

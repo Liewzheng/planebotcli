@@ -20,7 +20,8 @@ use planebotcli_types::{
     WorkItem, WorkItemWrite,
 };
 use render::{
-    Lookups, attachment_json, comment_json, intake_status_label, intake_view, work_item_view,
+    Lookups, attachment_json, comment_json, compose_sequence_id, intake_status_label, intake_view,
+    sub_issue_summaries, work_item_view,
 };
 use serde_json::{Value, json};
 
@@ -68,6 +69,12 @@ pub enum Command {
     Comment {
         #[command(subcommand)]
         command: CommentCmd,
+    },
+    /// Manage work item relations (blocking, duplicates, links).
+    #[command(visible_alias = "relation")]
+    Relations {
+        #[command(subcommand)]
+        command: RelationsCmd,
     },
     /// Manage work item attachments (file uploads).
     #[command(visible_alias = "attachments")]
@@ -197,6 +204,56 @@ pub enum CommentCmd {
         /// Work item identifier (ABC-123), UUID, or name.
         #[arg(long)]
         issue: String,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+}
+
+/// Manage work item relations.
+///
+/// Relations are directional: `relations ls` shows the eight buckets the API
+/// returns, and `relations add` links one issue to others under a single type.
+#[derive(Subcommand)]
+pub enum RelationsCmd {
+    /// List a work item's relations.
+    #[command(alias = "ls")]
+    List {
+        /// Work item identifier (ABC-123), UUID, or name.
+        issue: String,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Create relations from a work item to one or more others.
+    Add {
+        /// Work item identifier (ABC-123), UUID, or name.
+        issue: String,
+        /// Relation type: blocking, blocked_by, duplicate, relates_to,
+        /// start_before, start_after, finish_before, finish_after.
+        #[arg(long = "type")]
+        relation_type: String,
+        /// Related work item identifier (ABC-123), UUID, or name (repeatable).
+        #[arg(long, short = 't')]
+        to: Vec<String>,
+        /// Project name/ID (required for name-based lookup).
+        #[arg(long, short = 'p')]
+        project: Option<String>,
+    },
+    /// Remove a relation (not supported by the API).
+    ///
+    /// The Plane API exposes relation creation but no delete endpoint, so this
+    /// always fails with a validation error instead of silently doing nothing.
+    #[command(alias = "rm")]
+    Remove {
+        /// Work item identifier (ABC-123), UUID, or name.
+        issue: String,
+        /// Relation type to remove.
+        #[arg(long = "type")]
+        relation_type: String,
+        /// Related work item identifier (ABC-123), UUID, or name (repeatable).
+        #[arg(long, short = 't')]
+        to: Vec<String>,
         /// Project name/ID (required for name-based lookup).
         #[arg(long, short = 'p')]
         project: Option<String>,
@@ -822,6 +879,14 @@ pub enum WiCmd {
         /// New target end date (YYYY-MM-DD).
         #[arg(long)]
         target_date: Option<String>,
+        /// Set the parent work item (ABC-123), UUID, or name. Must live in the
+        /// same project as the issue. Mutually exclusive with --clear-parent.
+        #[arg(long)]
+        parent: Option<String>,
+        /// Remove the parent, making the work item top-level. Mutually
+        /// exclusive with --parent.
+        #[arg(long)]
+        clear_parent: bool,
         /// Image file path to embed in the description (repeatable). The image
         /// is uploaded and appended to the existing description, or to the new
         /// --description (or --desc-md) if one is given.
@@ -993,6 +1058,8 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 desc_md,
                 start_date,
                 target_date,
+                parent,
+                clear_parent,
                 image,
                 force,
             } => {
@@ -1008,6 +1075,8 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     desc_md: desc_md.as_deref(),
                     start_date: start_date.as_deref(),
                     target_date: target_date.as_deref(),
+                    parent: parent.as_deref(),
+                    clear_parent,
                     image: &image,
                     force,
                 };
@@ -1118,6 +1187,25 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 issue,
                 project,
             } => cmd_comment_delete(&client, &issue, project.as_deref(), &comment_id).await,
+        },
+        Command::Relations { command } => match command {
+            RelationsCmd::List { issue, project } => {
+                cmd_relations_list(&client, &issue, project.as_deref(), cli.json).await
+            }
+            RelationsCmd::Add {
+                issue,
+                relation_type,
+                to,
+                project,
+            } => {
+                let opts = RelationAddOpts {
+                    relation_type: &relation_type,
+                    to: &to,
+                    project: project.as_deref(),
+                };
+                cmd_relations_add(&client, &issue, &opts, cli.json).await
+            }
+            RelationsCmd::Remove { .. } => cmd_relations_remove(),
         },
         Command::Attachment { command } => match command {
             AttachmentCmd::Attach {
@@ -1844,6 +1932,16 @@ async fn cmd_wi_show(
         &workspace,
     );
 
+    // Sub-issues: the project's work items parented to this one, so a parent
+    // set or cleared here is visible on read-back.
+    let project_items = client.list_work_items(&located.project_id).await?;
+    view["sub_issues"] = Value::Array(sub_issue_summaries(
+        &project_items,
+        &detail.id,
+        &located.project_identifier,
+        &lookups,
+    ));
+
     // Comments are a secondary enrichment: a fetch failure degrades to null
     // instead of aborting the command.
     if !no_comments {
@@ -1874,6 +1972,7 @@ async fn cmd_wi_show(
             ("state_detail_name", "State"),
             ("assignee_names", "Assignees"),
             ("label_names", "Labels"),
+            ("parent", "Parent"),
             ("estimate_display", "Estimate"),
             ("start_date", "Start Date"),
             ("target_date", "Target Date"),
@@ -1912,6 +2011,29 @@ async fn cmd_wi_show(
                 _ => eprintln!("Comments: (failed to load)"),
             }
         }
+
+        if let Some(Value::Array(items)) = view.get("sub_issues")
+            && !items.is_empty()
+        {
+            eprintln!();
+            let sub_rows: Vec<Vec<String>> = items
+                .iter()
+                .map(|sub| {
+                    let seq = sub["sequence_id"].as_str().unwrap_or("");
+                    let id = sub["id"].as_str().unwrap_or("");
+                    vec![
+                        if seq.is_empty() {
+                            short_uuid(id)
+                        } else {
+                            seq.to_string()
+                        },
+                        sub["name"].as_str().unwrap_or("").to_string(),
+                        sub["state_detail_name"].as_str().unwrap_or("").to_string(),
+                    ]
+                })
+                .collect();
+            output_table(&["Sub-issue", "Title", "State"], &sub_rows);
+        }
     }
     Ok(())
 }
@@ -1946,6 +2068,10 @@ struct UpdateOpts<'a> {
     desc_md: Option<&'a str>,
     start_date: Option<&'a str>,
     target_date: Option<&'a str>,
+    /// New parent work item reference (`--parent`).
+    parent: Option<&'a str>,
+    /// Clear the parent (`--clear-parent`).
+    clear_parent: bool,
     /// Image paths to upload and embed in the description (`-i`, repeatable).
     image: &'a [String],
     force: bool,
@@ -1963,6 +2089,90 @@ fn validate_description_flags(
         ));
     }
     Ok(())
+}
+
+/// Trim a `--parent` reference and reject a blank one: an empty query would
+/// fuzzy-match the first work item in the project.
+fn validate_parent_query(query: &str) -> Result<&str, PlaneError> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Err(PlaneError::validation_with_hint(
+            "--parent requires a work item identifier, UUID, or name.",
+            "Use --clear-parent to remove the parent instead.",
+        ));
+    }
+    Ok(trimmed)
+}
+
+/// Reject an empty `--to` list and blank targets (a blank entry would match an
+/// arbitrary work item).
+fn validate_relation_targets(targets: &[String]) -> Result<(), PlaneError> {
+    if targets.is_empty() {
+        return Err(PlaneError::validation_with_hint(
+            "At least one --to is required.",
+            "Example: pbot relations add PLANECLI-38 --type blocking --to PLANECLI-39",
+        ));
+    }
+    if targets.iter().any(|target| target.trim().is_empty()) {
+        return Err(PlaneError::validation(
+            "--to requires a work item identifier, UUID, or name.",
+        ));
+    }
+    Ok(())
+}
+
+/// How a `--parent` reference relates to the issue's own project, decided
+/// before any server lookup.
+#[derive(Debug, PartialEq, Eq)]
+enum ParentReference {
+    /// A UUID, bare name, or same-project `ABC-123` — resolve it in the project.
+    SameProject,
+    /// `ABC-123` carrying another project's identifier.
+    CrossProject(String),
+}
+
+/// The project identifier prefix of an `ABC-123` reference (`None` for UUIDs,
+/// bare names, and prefixed-looking text such as `Release-2026` whose prefix is
+/// not identifier-shaped).
+fn identifier_prefix(query: &str) -> Option<&str> {
+    if planebotcli_resolve::is_uuid(query) {
+        return None;
+    }
+    let (prefix, suffix) = query.rsplit_once('-')?;
+    let prefix_is_identifier = !prefix.is_empty()
+        && prefix
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_');
+    if !prefix_is_identifier || suffix.is_empty() || !suffix.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(prefix)
+}
+
+/// Classify a `--parent` reference against the issue's project identifier. An
+/// unknown project identifier (`""`) can never prove a reference foreign, so it
+/// resolves within the project.
+fn classify_parent_reference(query: &str, project_identifier: &str) -> ParentReference {
+    match identifier_prefix(query) {
+        Some(prefix)
+            if !project_identifier.is_empty()
+                && !prefix.eq_ignore_ascii_case(project_identifier) =>
+        {
+            ParentReference::CrossProject(prefix.to_string())
+        }
+        _ => ParentReference::SameProject,
+    }
+}
+
+/// Up to 15 `PROJ-123` labels for the "parent not found" message, keeping it
+/// short on large projects.
+fn parent_candidates(items: &[WorkItem], project_identifier: &str) -> Vec<String> {
+    items
+        .iter()
+        .map(|item| compose_sequence_id(item.sequence_id.as_ref(), project_identifier))
+        .filter(|label| !label.is_empty())
+        .take(15)
+        .collect()
 }
 
 /// Seed the description parts that `-i/--image` img tags are appended to,
@@ -2220,6 +2430,8 @@ async fn cmd_wi_update(
     let located = locate_issue(client, issue, opts.project).await?;
     let project_id = located.project_id.clone();
     let project_identifier = located.project_identifier.clone();
+    // Validated before any write, so a bad parent never half-applies an update.
+    let parent_action = resolve_parent_action(client, &located, opts).await?;
 
     let start_date = validate_date(opts.start_date, "--start-date")?;
     let target_date = validate_date(opts.target_date, "--target-date")?;
@@ -2292,6 +2504,18 @@ async fn cmd_wi_update(
         }
     }
 
+    // The parent lives on its own endpoint; re-read the item so the printed
+    // view reflects the parent the server now holds.
+    let updated = match parent_action {
+        Some(parent) => {
+            client
+                .set_work_item_parent(&project_id, &located.item.id, parent.as_deref())
+                .await?;
+            client.get_work_item(&project_id, &located.item.id).await?
+        }
+        None => updated,
+    };
+
     output_work_item_view(
         client,
         base_url,
@@ -2301,6 +2525,104 @@ async fn cmd_wi_update(
         "Work Item Updated",
     )
     .await
+}
+
+/// Resolve `--parent`/`--clear-parent` into the value
+/// [`PlaneClient::set_work_item_parent`] needs: `None` when neither flag was
+/// given, `Some(None)` to clear, `Some(Some(uuid))` to set.
+///
+/// Every rejection is a `PlaneError::Validation` (exit 5) raised before the
+/// write: mutual exclusion, a cross-project reference, the issue as its own
+/// parent, and an unresolvable reference.
+async fn resolve_parent_action(
+    client: &PlaneClient,
+    located: &planebotcli_resolve::LocatedWorkItem,
+    opts: &UpdateOpts<'_>,
+) -> Result<Option<Option<String>>, PlaneError> {
+    if opts.clear_parent {
+        if opts.parent.is_some() {
+            return Err(PlaneError::validation_with_hint(
+                "--parent and --clear-parent are mutually exclusive.",
+                "Pass one of them, or neither to leave the parent unchanged.",
+            ));
+        }
+        return Ok(Some(None));
+    }
+    let Some(query) = opts.parent else {
+        return Ok(None);
+    };
+    let query = validate_parent_query(query)?;
+
+    if let ParentReference::CrossProject(prefix) =
+        classify_parent_reference(query, &located.project_identifier)
+    {
+        return Err(PlaneError::Validation {
+            message: format!(
+                "Work item {query} belongs to project '{prefix}', but this work item is in {} — a parent must be in the same project.",
+                located.project_identifier
+            ),
+            hint: None,
+        });
+    }
+
+    let items = client.list_work_items(&located.project_id).await?;
+    let proj = project_stub(located);
+    match locate_work_item_in_project(query, &proj, client).await {
+        Ok(target) => {
+            validate_resolved_parent(
+                query,
+                &located.item.id,
+                &located.project_id,
+                &located.project_identifier,
+                &target.item.id,
+                &target.project_id,
+            )?;
+            Ok(Some(Some(target.item.id)))
+        }
+        Err(PlaneError::NotFound { .. }) => {
+            let candidates = parent_candidates(&items, &located.project_identifier);
+            let available = if candidates.is_empty() {
+                "(none)".to_string()
+            } else {
+                candidates.join(", ")
+            };
+            Err(PlaneError::Validation {
+                message: format!(
+                    "Parent work item not found in project {}: {query}. Available: {available}",
+                    located.project_identifier
+                ),
+                hint: None,
+            })
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Validate a resolved parent before the write: a work item cannot parent
+/// itself, and the parent must live in the same project as the issue. Both are
+/// `Validation` errors (exit 5), keeping them unit-testable without a client.
+fn validate_resolved_parent(
+    query: &str,
+    issue_id: &str,
+    issue_project_id: &str,
+    issue_project_identifier: &str,
+    target_id: &str,
+    target_project_id: &str,
+) -> Result<(), PlaneError> {
+    if target_id == issue_id {
+        return Err(PlaneError::validation(format!(
+            "A work item cannot be its own parent: {query}."
+        )));
+    }
+    if !target_project_id.is_empty() && target_project_id != issue_project_id {
+        return Err(PlaneError::Validation {
+            message: format!(
+                "Work item {query} is in project {target_project_id}, but this work item is in {issue_project_identifier} — a parent must be in the same project."
+            ),
+            hint: None,
+        });
+    }
+    Ok(())
 }
 
 /// Enrich and print a freshly written work item (maps fetched for names).
@@ -2503,6 +2825,230 @@ async fn cmd_comment_delete(
         .await?;
     eprintln!("Comment {comment_id} deleted.");
     Ok(())
+}
+
+/// The relation types the Plane API accepts, in bucket order.
+const RELATION_TYPES: [&str; 8] = [
+    "blocking",
+    "blocked_by",
+    "duplicate",
+    "relates_to",
+    "start_before",
+    "start_after",
+    "finish_before",
+    "finish_after",
+];
+
+/// Options for `relations add`.
+struct RelationAddOpts<'a> {
+    relation_type: &'a str,
+    to: &'a [String],
+    project: Option<&'a str>,
+}
+
+/// Validate a `--type` value against the eight the API accepts. Hyphens are
+/// taken as a spelling of underscores (`relates-to` == `relates_to`).
+fn normalize_relation_type(raw: &str) -> Result<&'static str, PlaneError> {
+    let normalized = raw.trim().to_ascii_lowercase().replace('-', "_");
+    RELATION_TYPES
+        .iter()
+        .copied()
+        .find(|known| *known == normalized)
+        .ok_or_else(|| PlaneError::Validation {
+            message: format!(
+                "Unknown relation type '{raw}'. Allowed: {}.",
+                RELATION_TYPES.join(", ")
+            ),
+            hint: None,
+        })
+}
+
+/// Flatten the API's relation buckets into `(type, project_id, issue_id)`
+/// rows in [`RELATION_TYPES`] order; empty buckets are omitted.
+fn relation_rows(relations: &Value) -> Vec<(String, String, String)> {
+    let mut rows = Vec::new();
+    for relation_type in RELATION_TYPES {
+        let Some(Value::Array(entries)) = relations.get(relation_type) else {
+            continue;
+        };
+        for entry in entries {
+            rows.push((
+                relation_type.to_string(),
+                entry
+                    .get("project_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                entry
+                    .get("issue_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            ));
+        }
+    }
+    rows
+}
+
+/// A minimal `Project` carrying only the id and identifier of a located work
+/// item's project, for the project-scoped resolvers (no extra request).
+fn project_stub(located: &planebotcli_resolve::LocatedWorkItem) -> Project {
+    Project {
+        id: located.project_id.clone(),
+        identifier: Some(located.project_identifier.clone()),
+        ..Default::default()
+    }
+}
+
+/// `PROJ-123` for a located work item, falling back to its UUID.
+fn issue_label(located: &planebotcli_resolve::LocatedWorkItem) -> String {
+    let label = compose_sequence_id(
+        located.item.sequence_id.as_ref(),
+        &located.project_identifier,
+    );
+    if label.is_empty() {
+        located.item.id.clone()
+    } else {
+        label
+    }
+}
+
+/// First eight characters of a UUID, for display when no label resolves.
+fn short_uuid(id: &str) -> String {
+    id.chars().take(8).collect()
+}
+
+/// Map related issue UUIDs to `PROJ-123` labels, listing the work items of
+/// every project the buckets mention (cached; the issue's own project is known
+/// up front and needs no extra project lookup).
+async fn relation_issue_labels(
+    client: &PlaneClient,
+    rows: &[(String, String, String)],
+    own_project_id: &str,
+    own_identifier: &str,
+) -> Result<HashMap<String, String>, PlaneError> {
+    let mut project_ids = vec![own_project_id.to_string()];
+    for (_, project_id, _) in rows {
+        if !project_id.is_empty() && !project_ids.iter().any(|p| p == project_id) {
+            project_ids.push(project_id.clone());
+        }
+    }
+    let mut labels = HashMap::new();
+    for project_id in project_ids {
+        let identifier = if project_id == own_project_id {
+            own_identifier.to_string()
+        } else {
+            client
+                .get_project(&project_id)
+                .await?
+                .identifier
+                .unwrap_or_default()
+        };
+        for item in client.list_work_items(&project_id).await? {
+            let label = compose_sequence_id(item.sequence_id.as_ref(), &identifier);
+            if !label.is_empty() {
+                labels.insert(item.id, label);
+            }
+        }
+    }
+    Ok(labels)
+}
+
+/// `relations ls` — list a work item's relations. `--json` prints the raw
+/// relation buckets; the table flattens them into one row per related issue.
+async fn cmd_relations_list(
+    client: &PlaneClient,
+    issue: &str,
+    project: Option<&str>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let located = locate_issue(client, issue, project).await?;
+    let relations = client
+        .list_relations(&located.project_id, &located.item.id)
+        .await?;
+    if json {
+        output_json(&relations);
+        return Ok(());
+    }
+    let rows = relation_rows(&relations);
+    if rows.is_empty() {
+        eprintln!("No relations for {}.", issue_label(&located));
+        return Ok(());
+    }
+    let labels = relation_issue_labels(
+        client,
+        &rows,
+        &located.project_id,
+        &located.project_identifier,
+    )
+    .await?;
+    let table_rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|(relation_type, _, issue_id)| {
+            vec![
+                relation_type.clone(),
+                labels
+                    .get(issue_id)
+                    .cloned()
+                    .unwrap_or_else(|| short_uuid(issue_id)),
+                issue_id.clone(),
+            ]
+        })
+        .collect();
+    output_table(&["Type", "Related", "Issue ID"], &table_rows);
+    Ok(())
+}
+
+/// `relations add` — create one relation type from `issue` to every `--to`
+/// target. Targets are resolved inside the issue's project and validated
+/// before the write.
+async fn cmd_relations_add(
+    client: &PlaneClient,
+    issue: &str,
+    opts: &RelationAddOpts<'_>,
+    json: bool,
+) -> Result<(), PlaneError> {
+    let relation_type = normalize_relation_type(opts.relation_type)?;
+    validate_relation_targets(opts.to)?;
+    let located = locate_issue(client, issue, opts.project).await?;
+    let proj = project_stub(&located);
+    let mut target_ids = Vec::with_capacity(opts.to.len());
+    for target in opts.to {
+        let found = locate_work_item_in_project(target, &proj, client).await?;
+        if found.item.id == located.item.id {
+            return Err(PlaneError::validation(format!(
+                "A work item cannot be related to itself: {target}."
+            )));
+        }
+        target_ids.push(found.item.id);
+    }
+    let response = client
+        .create_relations(
+            &located.project_id,
+            &located.item.id,
+            relation_type,
+            &target_ids,
+        )
+        .await?;
+    if json {
+        output_json(&response);
+    } else {
+        eprintln!(
+            "Linked {} ({relation_type}) to {} work item(s).",
+            issue_label(&located),
+            target_ids.len()
+        );
+    }
+    Ok(())
+}
+
+/// `relations rm` — always fails: the Plane API exposes relation creation but
+/// no delete endpoint, so a silent no-op would be misleading.
+fn cmd_relations_remove() -> Result<(), PlaneError> {
+    Err(PlaneError::validation_with_hint(
+        "Removing a relation is not supported: the Plane API has no relations delete endpoint.",
+        "Tracked in PLANECLI-38; use the Plane web UI to remove a relation for now.",
+    ))
 }
 
 /// Guess a MIME type from a filename extension, defaulting to
@@ -4524,5 +5070,182 @@ mod tests {
         // Create has no `existing` fallback: images only, no leading text.
         assert!(embed_seed_parts(None, None, None).is_empty());
         assert!(embed_seed_parts(None, Some(""), None).is_empty());
+    }
+
+    #[test]
+    fn relation_type_validation_accepts_aliases_and_rejects_unknown() {
+        for known in RELATION_TYPES {
+            assert_eq!(normalize_relation_type(known).unwrap(), known);
+        }
+        assert_eq!(normalize_relation_type("BLOCKING").unwrap(), "blocking");
+        assert_eq!(normalize_relation_type("relates-to").unwrap(), "relates_to");
+        assert_eq!(
+            normalize_relation_type("  finish_after  ").unwrap(),
+            "finish_after"
+        );
+        let err = normalize_relation_type("blocks").unwrap_err();
+        assert!(matches!(err, PlaneError::Validation { .. }), "{err}");
+        assert_eq!(err.exit_code(), 5);
+        // The error lists every allowed type.
+        for known in RELATION_TYPES {
+            assert!(err.to_string().contains(known), "{err}");
+        }
+    }
+
+    #[test]
+    fn relation_rows_flatten_buckets_in_type_order_and_skip_empties() {
+        let relations = json!({
+            "blocking": [{"project_id": "p1", "issue_id": "wi2"}],
+            "blocked_by": [],
+            "relates_to": [{"project_id": "p2", "issue_id": "wi9"}],
+            "duplicate": [],
+            "start_after": [],
+            "start_before": [],
+            "finish_after": [],
+            "finish_before": [],
+        });
+        assert_eq!(
+            relation_rows(&relations),
+            vec![
+                ("blocking".to_string(), "p1".to_string(), "wi2".to_string()),
+                (
+                    "relates_to".to_string(),
+                    "p2".to_string(),
+                    "wi9".to_string()
+                ),
+            ]
+        );
+        // A null/absent body flattens to nothing rather than panicking.
+        assert!(relation_rows(&Value::Null).is_empty());
+    }
+
+    #[test]
+    fn parent_reference_classifies_same_and_cross_project() {
+        assert_eq!(
+            classify_parent_reference("PLANECLI-38", "PLANECLI"),
+            ParentReference::SameProject
+        );
+        assert_eq!(
+            classify_parent_reference("planecli-38", "PLANECLI"),
+            ParentReference::SameProject
+        );
+        assert_eq!(
+            classify_parent_reference("OTHER-1", "PLANECLI"),
+            ParentReference::CrossProject("OTHER".to_string())
+        );
+        // A UUID's trailing segment is not a sequence number.
+        assert_eq!(
+            classify_parent_reference("5963a34f-1038-43b2-90aa-cc2b183a30e2", "PLANECLI"),
+            ParentReference::SameProject
+        );
+        // Names are not identifier prefixed, even with a trailing number.
+        assert_eq!(
+            classify_parent_reference("Some feature name", "PLANECLI"),
+            ParentReference::SameProject
+        );
+        assert_eq!(
+            classify_parent_reference("Release-2026", "PLANECLI"),
+            ParentReference::SameProject
+        );
+        // An unknown project identifier can never prove a reference foreign.
+        assert_eq!(
+            classify_parent_reference("OTHER-1", ""),
+            ParentReference::SameProject
+        );
+    }
+
+    #[test]
+    fn parent_self_reference_is_rejected() {
+        let err = validate_resolved_parent("PLANECLI-38", "wi1", "p1", "PLANECLI", "wi1", "p1")
+            .unwrap_err();
+        assert!(matches!(err, PlaneError::Validation { .. }), "{err}");
+        assert_eq!(err.exit_code(), 5);
+        assert!(err.to_string().contains("own parent"), "{err}");
+    }
+
+    #[test]
+    fn parent_cross_project_reference_is_rejected() {
+        let err = validate_resolved_parent("PLANECLI-38", "wi1", "p1", "PLANECLI", "wi2", "p2")
+            .unwrap_err();
+        assert!(matches!(err, PlaneError::Validation { .. }), "{err}");
+        assert_eq!(err.exit_code(), 5);
+        assert!(err.to_string().contains("same project"), "{err}");
+        // An empty target project (unresolved) is not a mismatch.
+        assert!(
+            validate_resolved_parent("PLANECLI-38", "wi1", "p1", "PLANECLI", "wi2", "").is_ok()
+        );
+    }
+
+    #[test]
+    fn parent_same_project_is_accepted() {
+        assert!(
+            validate_resolved_parent("PLANECLI-38", "wi1", "p1", "PLANECLI", "wi2", "p1").is_ok()
+        );
+    }
+
+    #[test]
+    fn parent_candidates_are_composed_and_capped() {
+        let items: Vec<WorkItem> = (1..=40)
+            .map(|n| WorkItem {
+                id: format!("wi{n}"),
+                sequence_id: Some(Value::from(n)),
+                ..Default::default()
+            })
+            .collect();
+        let candidates = parent_candidates(&items, "PLANECLI");
+        assert_eq!(candidates.len(), 15);
+        assert_eq!(candidates[0], "PLANECLI-1");
+        assert_eq!(candidates[14], "PLANECLI-15");
+        // Without a project identifier nothing composes, so nothing is listed.
+        assert!(parent_candidates(&items, "").is_empty());
+    }
+
+    #[test]
+    fn project_stub_carries_id_and_identifier() {
+        let located = planebotcli_resolve::LocatedWorkItem {
+            item: WorkItem {
+                id: "wi1".into(),
+                sequence_id: Some(Value::from(7)),
+                ..Default::default()
+            },
+            project_id: "p1".into(),
+            project_identifier: "PLANECLI".into(),
+        };
+        let stub = project_stub(&located);
+        assert_eq!(stub.id, "p1");
+        assert_eq!(stub.identifier.as_deref(), Some("PLANECLI"));
+        assert_eq!(issue_label(&located), "PLANECLI-7");
+        assert_eq!(short_uuid("5963a34f-1038"), "5963a34f");
+    }
+
+    #[test]
+    fn relations_remove_reports_the_missing_backend_endpoint() {
+        let err = cmd_relations_remove().unwrap_err();
+        assert!(matches!(err, PlaneError::Validation { .. }), "{err}");
+        assert_eq!(err.exit_code(), 5);
+        assert!(err.to_string().contains("no relations delete endpoint"));
+        assert!(err.hint().is_some());
+    }
+
+    #[test]
+    fn blank_parent_query_is_rejected_and_trimmed() {
+        let err = validate_parent_query("   ").unwrap_err();
+        assert!(matches!(err, PlaneError::Validation { .. }), "{err}");
+        assert_eq!(err.exit_code(), 5);
+        assert!(err.hint().is_some());
+        assert_eq!(validate_parent_query(" PLANECLI-3 ").unwrap(), "PLANECLI-3");
+    }
+
+    #[test]
+    fn relation_targets_must_be_present_and_non_blank() {
+        let err = validate_relation_targets(&[]).unwrap_err();
+        assert!(matches!(err, PlaneError::Validation { .. }), "{err}");
+        assert_eq!(err.exit_code(), 5);
+        assert!(
+            validate_relation_targets(&["PLANECLI-3".to_string(), "PLANECLI-4".to_string()])
+                .is_ok()
+        );
+        let blank = validate_relation_targets(&["PLANECLI-3".to_string(), " ".to_string()]);
+        assert!(matches!(blank, Err(PlaneError::Validation { .. })));
     }
 }

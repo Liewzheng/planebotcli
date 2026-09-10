@@ -70,9 +70,9 @@ small to track" or "too small for a PR" exemption.
    change (PLANECLI for this CLI). It carries the scope, the acceptance criterion, and the branch
    name. Work started without an item leaves no trace, and an untraced change is not deliverable.
 2. **Comment on the item as the work moves** — at start (branch + plan), at review (commit range,
-   PR URL, the `reng` findings and how each was answered), and at merge. Set the state to match
-   reality: `In Progress` once work begins, `Done` only after the merge is on `main`. A finished
-   change with no comment on its item is not done.
+   PR URL, and one line per review round summarising the `reng` findings and how each was answered),
+   and at merge. Set the state to match reality: `In Progress` once work begins, `Done` only after
+   the merge is on `main`. A finished change with no comment on its item is not done.
 3. **Branch per task**, off `integration-main`, named `<type>/<task>-<slug>` (e.g.
    `feat/planecli-42-relations-remove`). Never commit a task's work straight onto an integration or
    release branch.
@@ -88,22 +88,32 @@ small to track" or "too small for a PR" exemption.
 
 ### Review gate
 
+**Terms:** the published document is the *report*; its individual items are the *findings*.
+
 No PR is merged until `reng` (the local Rust Code Review Engine) has reviewed it and every finding
-has been answered on the PR.
+has been answered on the PR. The gate runs through the `gh` CLI — if `gh` is missing or
+unauthenticated, stop and say so rather than driving the API by hand.
 
 1. **Trigger the review and publish it to the PR.** `<n>` is the PR number kept in step 4 above
    (`gh pr view --json number -q .number` prints it again). `reng` is usually not on `PATH`:
 
    ```bash
+   command -v gh >/dev/null || { echo "gh is not installed — the review gate cannot run" >&2; exit 1; }
+   gh auth status >/dev/null 2>&1 || { echo "gh is not authenticated — run: gh auth login" >&2; exit 1; }
    RENG=$(command -v reng || echo ~/.local/bin/reng)
-   "$RENG" review \
-     --mr-url "https://github.com/Liewzheng/planebotcli/pull/<n>" \
-     --github-token "$(gh auth token)" --publish
+   [ -x "$RENG" ] || { echo "reng not found at $RENG — install it or fix PATH, then retry" >&2; exit 1; }
+   START=$(date +%s)
+   GITHUB_TOKEN=$(gh auth token) timeout 900 "$RENG" review \
+     --mr-url "https://github.com/Liewzheng/planebotcli/pull/<n>" --publish
    ```
 
-   The GitHub token comes from `gh auth token` (scope `repo`); `--publish` also leaves the full JSON
-   report under `~/.config/review-engine/reports/`. On GitHub the report is posted as a **PR review
-   body**, so read it with:
+   `timeout 900` turns a hung review into a failure the gate can report. Pass the token through the
+   environment (`reng` reads `GITHUB_TOKEN`), **not** with `--github-token`: command-line arguments
+   are visible in `ps` output and land in shell history. An environment variable is not a vault
+   either — it is inherited by child processes and can surface in debug dumps — but it is strictly
+   better than argv, and it is the only channel `reng` offers.
+   `--publish` also leaves the full JSON report under `~/.config/review-engine/reports/`. On GitHub
+   the report is posted as a **PR review body**, so read it with:
 
    ```bash
    gh api "repos/Liewzheng/planebotcli/pulls/<n>/reviews" \
@@ -111,21 +121,27 @@ has been answered on the PR.
    ```
 
    Filter on the report heading rather than taking `.[0]`: other reviews may sit on the PR, and
-   `.[0]` would then hand back the wrong body. `gh pr view --comments` fails on this repo with a
-   GraphQL Projects-classic deprecation error, so do not reach for it.
-2. **Wait 5 minutes after triggering before reading anything.** This pause is the maintainer's
-   requirement, not a guess at how long `reng` takes (`reng review` blocks until the review is
-   published, so the wait is a deliberate cooling-off window).
+   `.[0]` would then hand back the wrong body. `reng` updates its report in place, so a PR normally
+   carries exactly one, and `last` just guards against a newer one being present.
+   `gh pr view --comments` fails on this repo with a GraphQL Projects-classic deprecation error, so
+   do not reach for it.
+2. **Wait 5 minutes from the moment the review command starts before reading anything.** `START`
+   above holds that moment in epoch seconds; do not read until `date +%s` is at least `START + 300`.
+   The pause is fixed by the maintainer, not derived from `reng`'s runtime: the command blocks until
+   it has published, so the wait is a cooling-off window rather than a completion check, and it
+   applies even when the report is already up.
 3. **A failed or empty publish is not a pass.** `--publish` can exit non-zero with `inline notes`
    while the report *was* published, and re-running updates the existing report in place rather than
-   posting a second copy — check the PR before re-running. But if `reng` did not run, died before
-   publishing, or the PR carries no report at all, stop: report the failure on the PR and to the
-   human, and do not ask for a merge. An expert rendered as *"输出解析失败 / failed to parse its
-   output"* counts as **unreviewed, not clean** — say so when reporting the findings.
+   posting a second copy — check the PR before re-running. But if `reng` cannot be resolved, fails to
+   start, exits on the `timeout` (status 124, meaning it hung), dies before publishing, or the PR
+   carries no report at all, stop: report the failure on the PR and to the human, and do not ask for
+   a merge. An expert rendered as *"输出解析失败 / failed to parse its output"* counts as
+   **unreviewed, not clean** — say so when reporting the findings. A finding with an empty title is a
+   parse artifact rather than a reviewable item: name it as such in the triage comment and move on.
 4. **Triage every finding and reply to it on the PR — none may be left unanswered.** The report is a
-   review body, so there is normally no inline thread to reply in; post one
-   `gh pr comment <n> --repo Liewzheng/planebotcli --body-file <file>` that lists every finding and
-   its disposition.
+   review body, so there is normally no inline thread to reply in; each round gets its own top-level
+   `gh pr comment <n> --repo Liewzheng/planebotcli --body-file <file>` — separate comments, not one
+   growing thread — listing every finding in that round and its disposition.
    - **real bug or good suggestion** → fix it on the same branch, push, and reply with what changed;
    - **needs a human decision, or a change too large for this branch** → reply saying so and carry it
      into the merge request; never drop it silently;

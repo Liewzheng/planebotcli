@@ -34,10 +34,15 @@ pub struct BestMatch<T> {
 }
 
 /// Return the item (and score) closest to `query` with score >= threshold.
+/// A blank query never matches — an empty string would otherwise score 100
+/// against a resource with an empty name.
 pub fn find_best_match<'a, T, F>(query: &str, items: &'a [T], key: F) -> Option<BestMatch<&'a T>>
 where
     F: Fn(&T) -> &str,
 {
+    if query.trim().is_empty() {
+        return None;
+    }
     let mut best: Option<(f64, &'a T)> = None;
     for item in items {
         let score = token_sort_ratio(query, key(item));
@@ -61,18 +66,69 @@ pub fn is_uuid(s: &str) -> bool {
         .all(|(part, len)| part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
-/// Resolve a project by UUID, or fuzzy-match its name.
+/// How a project query was matched: exact identifier, exact name, or fuzzy name.
+pub enum ProjectMatch {
+    ExactIdentifier(Project),
+    ExactName(Project),
+    Fuzzy(Project),
+}
+
+/// Match a project reference: exact identifier first (case-insensitive), then exact
+/// name (case-insensitive), then fuzzy name. Exact hits win over a closer fuzzy match
+/// — an identifier like `RENG` must never be resolved onto a different project by name.
+pub fn match_project(query: &str, projects: &[Project]) -> Option<ProjectMatch> {
+    if query.trim().is_empty() {
+        return None;
+    }
+    projects
+        .iter()
+        .find(|p| {
+            p.identifier
+                .as_deref()
+                .is_some_and(|i| i.eq_ignore_ascii_case(query))
+        })
+        .map(|p| ProjectMatch::ExactIdentifier(p.clone()))
+        .or_else(|| {
+            projects
+                .iter()
+                .find(|p| {
+                    p.name
+                        .as_deref()
+                        .is_some_and(|n| n.eq_ignore_ascii_case(query))
+                })
+                .map(|p| ProjectMatch::ExactName(p.clone()))
+        })
+        .or_else(|| {
+            find_best_match(query, projects, |p| p.name.as_deref().unwrap_or(""))
+                .map(|m| ProjectMatch::Fuzzy(m.item.clone()))
+        })
+}
+
+/// Resolve a project by UUID, exact identifier, exact name, or fuzzy name.
+/// A fuzzy (name-only) fallback prints a warning instead of silently landing on
+/// a different project.
 pub async fn resolve_project(query: &str, client: &PlaneClient) -> Result<Project, PlaneError> {
     if is_uuid(query) {
         return client.get_project(query).await;
     }
     let projects = client.list_projects().await?;
-    if let Some(m) = find_best_match(query, &projects, |p| p.name.as_deref().unwrap_or("")) {
-        return Ok(m.item.clone());
+    match match_project(query, &projects) {
+        Some(ProjectMatch::ExactIdentifier(p)) | Some(ProjectMatch::ExactName(p)) => Ok(p),
+        Some(ProjectMatch::Fuzzy(p)) => {
+            let shown = p
+                .name
+                .as_deref()
+                .or(p.identifier.as_deref())
+                .unwrap_or_default();
+            eprintln!(
+                "warning: no exact project named or identified '{query}'; matched '{shown}' — pass the exact name or identifier to target it precisely",
+            );
+            Ok(p)
+        }
+        None => Err(PlaneError::NotFound {
+            message: format!("Project not found: {query}"),
+        }),
     }
-    Err(PlaneError::NotFound {
-        message: format!("Project not found: {query}"),
-    })
 }
 
 /// Resolve a user reference to an (id, display name) pair: `me` resolves to
@@ -232,5 +288,67 @@ mod tests {
         assert!(is_uuid("5963a34f-1038-43b2-90aa-cc2b183a30e2"));
         assert!(!is_uuid("PLANECLI-9"));
         assert!(!is_uuid("not-a-uuid"));
+    }
+
+    fn proj(id: &str, name: &str, identifier: &str) -> Project {
+        Project {
+            id: id.to_string(),
+            name: Some(name.to_string()),
+            identifier: Some(identifier.to_string()),
+            description: None,
+            intake_view: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn project_identifier_wins_over_fuzzy_name() {
+        // RENG and SIRENA both fuzzy-match "reng"; the exact identifier must win.
+        let projects = vec![
+            proj("p-reng", "ReviewEngine", "RENG"),
+            proj("p-sirena", "Sirena", "SIRENA"),
+        ];
+        let m = match_project("RENG", &projects).unwrap();
+        assert!(matches!(m, ProjectMatch::ExactIdentifier(p) if p.id == "p-reng"));
+        let m = match_project("reng", &projects).unwrap();
+        assert!(matches!(m, ProjectMatch::ExactIdentifier(p) if p.id == "p-reng"));
+    }
+
+    #[test]
+    fn project_exact_name_beats_fuzzy_name() {
+        let projects = vec![
+            proj("p-plane", "PlaneCommunity", "PLANE"),
+            proj("p-planec", "PlaneCLI", "PLANECLI"),
+        ];
+        // "PLANE" is p-plane's identifier → exact identifier wins.
+        let m = match_project("PLANE", &projects).unwrap();
+        assert!(matches!(m, ProjectMatch::ExactIdentifier(p) if p.id == "p-plane"));
+        // "PlaneCLI" is also p-planec's identifier → identifier beats name.
+        let m = match_project("PlaneCLI", &projects).unwrap();
+        assert!(matches!(m, ProjectMatch::ExactIdentifier(p) if p.id == "p-planec"));
+        // "planecommunity" equals p-plane's name (case-insensitive) → exact name.
+        let m = match_project("planecommunity", &projects).unwrap();
+        assert!(matches!(m, ProjectMatch::ExactName(p) if p.id == "p-plane"));
+    }
+
+    #[test]
+    fn project_fuzzy_only_when_no_exact_hit() {
+        let projects = vec![
+            proj("p-reng", "ReviewEngine", "RENG"),
+            proj("p-sirena", "Sirena", "SIRENA"),
+        ];
+        // No exact identifier/name for "Siren"; falls back to fuzzy → Sirena.
+        let m = match_project("Siren", &projects).unwrap();
+        assert!(matches!(m, ProjectMatch::Fuzzy(p) if p.id == "p-sirena"));
+        // A query that matches nothing exactly and is too distant fuzzy-wise → None.
+        assert!(match_project("zzz-nothing", &projects).is_none());
+    }
+
+    #[test]
+    fn project_empty_query_has_no_match() {
+        let projects = vec![proj("p-reng", "ReviewEngine", "RENG")];
+        assert!(match_project("", &projects).is_none());
+        assert!(match_project("   ", &projects).is_none());
     }
 }

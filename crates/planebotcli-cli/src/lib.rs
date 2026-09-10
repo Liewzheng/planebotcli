@@ -2242,6 +2242,41 @@ fn normalize_priority(raw: Option<&str>) -> Result<Option<String>, PlaneError> {
     Ok(Some(canonical.to_string()))
 }
 
+/// Match a label reference: UUID, or exact name (case-insensitive). Labels are
+/// release and filter metadata; a fuzzy fall-back silently applies the closest
+/// label and pollutes data, so there is none (user feedback PLANECLI-10).
+fn match_label<'a>(query: &str, labels: &'a [Label]) -> Option<&'a Label> {
+    if query.trim().is_empty() {
+        return None;
+    }
+    if planebotcli_resolve::is_uuid(query) {
+        return labels.iter().find(|l| l.id == query);
+    }
+    labels
+        .iter()
+        .find(|l| l.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(query)))
+}
+
+/// Match a state reference: UUID, then exact name (case-insensitive), then fuzzy
+/// name. An exact name wins so a wrong state cannot be applied silently.
+fn match_state<'a>(query: &str, states: &'a [State]) -> Option<&'a State> {
+    if query.trim().is_empty() {
+        return None;
+    }
+    if planebotcli_resolve::is_uuid(query) {
+        return states.iter().find(|s| s.id == query);
+    }
+    states
+        .iter()
+        .find(|s| s.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(query)))
+        .or_else(|| {
+            planebotcli_resolve::find_best_match(query, states, |s| {
+                s.name.as_deref().unwrap_or("")
+            })
+            .map(|m| m.item)
+        })
+}
+
 /// Check `--state`/`--labels` against the project and resolve them to ids,
 /// mirroring the Python write-before validation: a missing name fails with the
 /// available list instead of a bare not-found error.
@@ -2262,14 +2297,7 @@ async fn resolve_state_label_ids(
     let state_id = match state {
         Some(query) if !query.trim().is_empty() => {
             let query = query.trim();
-            let found = if planebotcli_resolve::is_uuid(query) {
-                available_states.iter().find(|s| s.id == query)
-            } else {
-                planebotcli_resolve::find_best_match(query, &available_states, |s| {
-                    s.name.as_deref().unwrap_or("")
-                })
-                .map(|m| m.item)
-            };
+            let found = match_state(query, &available_states);
             match found {
                 Some(s) => Some(s.id.clone()),
                 None => {
@@ -2297,14 +2325,7 @@ async fn resolve_state_label_ids(
             if name.is_empty() {
                 continue;
             }
-            let found = if planebotcli_resolve::is_uuid(name) {
-                available_labels.iter().find(|l| l.id == name)
-            } else {
-                planebotcli_resolve::find_best_match(name, &available_labels, |l| {
-                    l.name.as_deref().unwrap_or("")
-                })
-                .map(|m| m.item)
-            };
+            let found = match_label(name, &available_labels);
             match found {
                 Some(l) => label_ids.push(l.id.clone()),
                 None => {
@@ -5247,5 +5268,121 @@ mod tests {
         );
         let blank = validate_relation_targets(&["PLANECLI-3".to_string(), " ".to_string()]);
         assert!(matches!(blank, Err(PlaneError::Validation { .. })));
+    }
+
+    fn label(id: &str, name: &str) -> Label {
+        Label {
+            id: id.to_string(),
+            name: Some(name.to_string()),
+            color: None,
+            description: None,
+            parent: None,
+            created_at: None,
+        }
+    }
+
+    fn state(id: &str, name: &str) -> State {
+        State {
+            id: id.to_string(),
+            name: Some(name.to_string()),
+            group: None,
+            color: None,
+            sequence: None,
+            created_at: None,
+        }
+    }
+
+    fn label_none(id: &str) -> Label {
+        Label {
+            id: id.to_string(),
+            name: None,
+            color: None,
+            description: None,
+            parent: None,
+            created_at: None,
+        }
+    }
+
+    fn state_none(id: &str) -> State {
+        State {
+            id: id.to_string(),
+            name: None,
+            group: None,
+            color: None,
+            sequence: None,
+            created_at: None,
+        }
+    }
+
+    #[test]
+    fn label_matches_exactly_only() {
+        let labels = vec![
+            label("l1", "release-0.10.6"),
+            label("l2", "release-0.10.9"),
+        ];
+        assert_eq!(
+            match_label("release-0.10.9", &labels).map(|l| l.id.as_str()),
+            Some("l2")
+        );
+        assert_eq!(
+            match_label("RELEASE-0.10.6", &labels).map(|l| l.id.as_str()),
+            Some("l1")
+        );
+        // No auto-approximate substitution: a close but different name must fail.
+        assert!(match_label("release-0.10.8", &labels).is_none());
+        assert!(match_label("unknown", &labels).is_none());
+    }
+
+    #[test]
+    fn state_prefers_exact_name_over_fuzzy() {
+        let states = vec![state("s1", "In Progress"), state("s2", "In Review")];
+        assert_eq!(
+            match_state("In Progress", &states).map(|s| s.id.as_str()),
+            Some("s1")
+        );
+        assert_eq!(
+            match_state("in review", &states).map(|s| s.id.as_str()),
+            Some("s2")
+        );
+        // No exact hit → fuzzy fallback still works for state.
+        assert_eq!(
+            match_state("In Prog", &states).map(|s| s.id.as_str()),
+            Some("s1")
+        );
+        assert!(match_state("zzz", &states).is_none());
+    }
+
+    #[test]
+    fn label_with_no_name_never_matches() {
+        let labels = vec![label_none("l1"), label("l2", "")];
+        assert!(match_label("anything", &labels).is_none());
+        assert!(match_label("", &labels).is_none());
+        assert!(match_label("   ", &labels).is_none());
+    }
+
+    #[test]
+    fn state_with_no_name_matches_nothing() {
+        let states = vec![state_none("s1"), state("s2", "")];
+        assert!(match_state("anything", &states).is_none());
+        assert!(match_state("", &states).is_none());
+        assert!(match_state("   ", &states).is_none());
+    }
+
+    #[test]
+    fn duplicate_label_names_resolve_deterministically_to_first() {
+        let labels = vec![label("l1", "bug"), label("l2", "bug")];
+        assert_eq!(
+            match_label("bug", &labels).map(|l| l.id.as_str()),
+            Some("l1")
+        );
+    }
+
+    #[test]
+    fn duplicate_state_names_prefer_first_exact() {
+        let states = vec![state("s1", "Todo"), state("s2", "Todo")];
+        assert_eq!(
+            match_state("Todo", &states).map(|s| s.id.as_str()),
+            Some("s1")
+        );
     }
 }

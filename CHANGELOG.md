@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `~/.planecli`, then the legacy `~/.plane_api`. `pbot configure` writes the active
   config file (highest-priority existing candidate, `~/.plane_api` by default);
   precedence stays CLI flags > env vars > config file.
+
+### Fixed
+- **Behaviour change**: project resolution now prefers exact identifiers and names
+  (case-insensitive) over fuzzy name matches, and prints a warning when only a fuzzy
+  match exists — `project show RENG` can no longer land on a different project
+  (Sirena) by name. `wi create --parent` therefore resolves parents within the right
+  project again.
+- `--labels` now matches strictly: a missing label errors with the available list
+  instead of silently applying the closest one (e.g. `release-0.10.9` → `release-0.10.6`).
+  States keep exact-name priority with a fuzzy fall-back.
 - Repository workflow conventions (`AGENTS.md`): every change is tracked by a
   work item, branched off `integration-main`, and landed through a pull request;
   `main`, `master`, and `dev` take no direct merges.

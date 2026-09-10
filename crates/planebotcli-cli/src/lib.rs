@@ -5367,4 +5367,22 @@ mod tests {
         assert!(match_state("", &states).is_none());
         assert!(match_state("   ", &states).is_none());
     }
+
+    #[test]
+    fn duplicate_label_names_resolve_deterministically_to_first() {
+        let labels = vec![label("l1", "bug"), label("l2", "bug")];
+        assert_eq!(
+            match_label("bug", &labels).map(|l| l.id.as_str()),
+            Some("l1")
+        );
+    }
+
+    #[test]
+    fn duplicate_state_names_prefer_first_exact() {
+        let states = vec![state("s1", "Todo"), state("s2", "Todo")];
+        assert_eq!(
+            match_state("Todo", &states).map(|s| s.id.as_str()),
+            Some("s1")
+        );
+    }
 }

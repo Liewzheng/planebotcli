@@ -1,8 +1,12 @@
 # Architecture
 
+> **Historical reference.** This document describes the Python implementation that has been
+> removed from this repository. It is kept for history, not as a description of the current
+> CLI — the Rust line lives under `crates/` (see [rust-rewrite.md](rust-rewrite.md)).
+
 ## Overview
 
-PlaneCLI is a Python command-line interface for [Plane.so](https://plane.so) (SaaS or self-hosted). Its defining feature is **fuzzy resource resolution**: any resource — project, work item, cycle, module, label, state, user — can be referenced by name, identifier (`ABC-123`), or UUID, and the CLI resolves it to the underlying record before making a change.
+pbotcli is a Python command-line interface for [Plane.so](https://plane.so) (SaaS or self-hosted). Its defining feature is **fuzzy resource resolution**: any resource — project, work item, cycle, module, label, state, user — can be referenced by name, identifier (`ABC-123`), or UUID, and the CLI resolves it to the underlying record before making a change.
 
 The codebase is organized as a set of thin layers. A command never talks to the Plane SDK directly; every request flows through resolution, an async wrapper, and a cache before reaching the network, and every result flows back through a formatter that separates human output from machine output.
 
@@ -24,25 +28,25 @@ record before reporting success — see [ADR-0007](adr/0007-verify-writes-the-ap
 
 ## Components
 
-**`app.py`** — the root cyclopts `App`. Registers every sub-app (`project_app`, `wi_app`, …) and defines `main()`, the entry point. `main()` strips the global `--verbose`/`-v` and `--no-cache` flags from `sys.argv` *before* cyclopts parses (cyclopts does not own these), configures logging and the cache, runs the app, and translates any `PlaneCLIError` into a formatted message plus exit code.
+**`app.py`** — the root cyclopts `App`. Registers every sub-app (`project_app`, `wi_app`, …) and defines `main()`, the entry point. `main()` strips the global `--verbose`/`-v` and `--no-cache` flags from `sys.argv` *before* cyclopts parses (cyclopts does not own these), configures logging and the cache, runs the app, and translates any `pbotcliError` into a formatted message plus exit code.
 
 **`commands/`** — one module per resource, each exposing a `cyclopts.App` with `list`/`show`/`create`/`update`/`delete` subcommands. This is where new features are added.
 
 **`utils/resolve.py`** — the resolution layer. Each resource has a `resolve_<x>` / `resolve_<x>_async` pair that tries **UUID → identifier → fuzzy name** in that order. Commands call the `_async` versions, which read through the cache.
 
-**`api/`** — `client.py` holds the `PlaneClient` singleton (`get_client`) plus `get_config`/`get_workspace`; `async_sdk.py` wraps the blocking SDK.
+**`api/`** — `client.py` holds the `PbotClient` singleton (`get_client`) plus `get_config`/`get_workspace`; `async_sdk.py` wraps the blocking SDK.
 
 **`cache.py`** — the disk cache (cashews). One `cached_list_<x>` per resource, returning plain dicts. TTLs vary by volatility.
 
 **`formatters/`** — `output()` (lists) and `output_single()` (records).
 
-**`exceptions.py`** — `PlaneCLIError` subclasses carrying `message`, `hint`, and `exit_code` (Auth=2, NotFound=3, API=4, Validation=5).
+**`exceptions.py`** — `pbotcliError` subclasses carrying `message`, `hint`, and `exit_code` (Auth=2, NotFound=3, API=4, Validation=5).
 
 **`utils/fuzzy.py`** — rapidfuzz `token_sort_ratio` matching with a default threshold of 60.
 
 ## Data Flow — resolving and updating a work item
 
-`planecli wi update ABC-123 --state "review"`:
+`pbot wi update ABC-123 --state "review"`:
 
 1. The `wi update` command resolves `ABC-123`. Because it matches the `ABC-123` identifier pattern, `resolve_work_item_async` fetches it directly via the raw SDK path (bypassing broken SDK validation — see [ADR-0003](adr/0003-sdk-escape-hatches.md)).
 2. `--state "review"` is resolved: `resolve_state_async` reads the project's **cached** state list and fuzzy-matches "review" to "In Review".

@@ -1,10 +1,14 @@
 ---
 status: accepted
 date: 2026-08-18
-decision-makers: PlaneCLI maintainers
+decision-makers: pbotcli maintainers
 ---
 
 # ADR-0008: Destructive deletes are documented, not prompted
+
+> **Historical reference.** This ADR records a decision made for the Python implementation
+> that has since been removed from this repository. It is kept for history; the current CLI is
+> the Rust line under `crates/`.
 
 ## Context and Problem Statement
 
@@ -34,7 +38,7 @@ an interactive confirmation, and if so, which ones?
 ## Decision Outcome
 
 Chosen option: **A**, because the CLI's primary consumers are scripts and AI agents
-(`allowed-tools: Bash(planecli *)`), and a prompt that only some commands raise is worse than
+(`allowed-tools: Bash(pbot *)`), and a prompt that only some commands raise is worse than
 no prompt at all: it silently hangs an automated caller that has no TTY, and it teaches
 interactive users that "no prompt" means "safe" — which is exactly the wrong lesson for the
 eight other deletes that would still be unprompted.
@@ -57,7 +61,7 @@ command with a cascade is expected to follow the same pattern in code review.
 ## Consequences
 
 **Positive:**
-- Behaviour stays uniform and scriptable: no `planecli` command blocks on stdin.
+- Behaviour stays uniform and scriptable: no `pbot` command blocks on stdin.
 - The warning reaches the user where they actually are — `--help`, README, and the agent skill.
 
 **Negative:**

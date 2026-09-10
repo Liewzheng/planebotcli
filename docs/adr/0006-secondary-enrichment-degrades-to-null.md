@@ -1,10 +1,14 @@
 ---
 status: accepted
 date: 2026-07-03
-decision-makers: PlaneCLI maintainers
+decision-makers: pbotcli maintainers
 ---
 
 # ADR-0006: Secondary enrichment degrades to a null sentinel (partial success)
+
+> **Historical reference.** This ADR records a decision made for the Python implementation
+> that has since been removed from this repository. It is kept for history; the current CLI is
+> the Rust line under `crates/`.
 
 ## Context and Problem Statement
 
@@ -40,10 +44,10 @@ The contract:
   (`--no-comments`).
 - **Exit code:** a secondary-fetch failure is a *partial success* → **exit 0**. Only a failure
   of the *primary* resource (resolution/auth on the issue itself) propagates as a
-  `PlaneCLIError` with its exit code, as before.
+  `pbotcliError` with its exit code, as before.
 - **Human stream:** the failure is announced on **stderr** (`Comments: (failed to load)`),
   consistent with [ADR-0005](0005-dual-output-contract.md) — stdout stays clean under `--json`.
-- **Narrow catch:** only API/transport errors (`PlaneError`, `PlaneCLIError`) degrade to `null`.
+- **Narrow catch:** only API/transport errors (`PlaneError`, `pbotcliError`) degrade to `null`.
   A programming bug (`KeyError`, bad merge, import error) **propagates** and crashes loudly, so
   it cannot ship green behind a passing "degrades to null" test.
 - **Isolation:** the degrading block lives *outside* the command's primary `try/except` with its
@@ -52,14 +56,14 @@ The contract:
 ## Confirmation
 
 The pattern is enforced in `commands/work_items.py::show`: the comment fetch is a standalone
-block after work-item enrichment, wrapped in `except (PlaneError, PlaneCLIError)`, setting
+block after work-item enrichment, wrapped in `except (PlaneError, pbotcliError)`, setting
 `data["comments"] = None` on failure. On the comment fetch itself the shared
 `fetch_issue_comments` helper is **raise-only** — each caller owns that failure policy, so
 `comment ls`, whose entire purpose *is* comments, keeps hard-failing with a proper exit code.
 
 The same "don't let a nicety sink the payload" logic applies *one level deeper, inside* the
 helper. Resolving each `actor` UUID to a display name needs the workspace members list — a
-**tertiary** enrichment. If that members fetch fails (`PlaneError`/`PlaneCLIError`), the helper
+**tertiary** enrichment. If that members fetch fails (`PlaneError`/`pbotcliError`), the helper
 degrades to an empty members map and `actor_name` falls back to the raw UUID (per
 `_enrich_comment`), rather than raising and losing comments that already loaded. This is the
 narrow exception to "raise-only": the helper still raises when the **comments** call fails

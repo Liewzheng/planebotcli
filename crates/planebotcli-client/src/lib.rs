@@ -527,7 +527,7 @@ impl PlaneClient {
             }
         };
         serde_json::from_value(serde_json::Value::Array(items)).map_err(|e| PlaneError::Api {
-            message: format!("invalid JSON from {path}: {e}"),
+            message: format!("invalid search result from {path}: {e}"),
         })
     }
 
@@ -1394,16 +1394,16 @@ fn is_sensitive_key(key: &str) -> bool {
     )
 }
 
+/// Substrings that hint a body may carry credentials and must not be echoed.
+const SENSITIVE_SUBSTRINGS: [&str; 5] = ["api_key", "token", "password", "authorization", "secret"];
+
 /// First 160 characters of a body for an error message, redacted when the head
 /// looks like it may carry credentials (token/password/secret), which could
 /// otherwise leak into logs.
 fn snippet_or_redact(body: &str) -> String {
     let head: String = body.chars().take(160).collect();
     let lower = head.to_ascii_lowercase();
-    if ["api_key", "token", "password", "authorization", "secret"]
-        .iter()
-        .any(|k| lower.contains(k))
-    {
+    if SENSITIVE_SUBSTRINGS.iter().any(|k| lower.contains(k)) {
         return "<redacted: body may contain credentials>".to_string();
     }
     head

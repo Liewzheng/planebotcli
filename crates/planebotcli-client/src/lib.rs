@@ -157,7 +157,7 @@ impl PlaneClient {
                 return serde_json::from_str(&text).map_err(|e| PlaneError::Api {
                     message: format!(
                         "invalid JSON from {path} (HTTP {status}): {e}; body starts: {}",
-                        text.chars().take(160).collect::<String>()
+                        snippet_or_redact(&text)
                     ),
                 });
             }
@@ -484,12 +484,12 @@ impl PlaneClient {
         Ok(())
     }
 
-    /// `GET /api/v1/workspaces/{ws}/work-items/search/?search=...`
+    /// `GET /api/v1/workspaces/{ws}/work-items/search/?search=...&limit=...`
     ///
     /// The endpoint returns an `{"issues": [...]}` envelope on Plane 1.4+ and a
-    /// bare array on older builds; both are accepted. `project_id` narrows the
-    /// search to one project (`workspace_search=false`), otherwise the whole
-    /// workspace is searched.
+    /// bare array on older builds; both are accepted. `limit` caps the results.
+    /// `project_id` narrows the search to one project and sends
+    /// `workspace_search=false`; when `None`, the whole workspace is searched.
     pub async fn search_work_items(
         &self,
         query: &str,
@@ -508,11 +508,16 @@ impl PlaneClient {
         let raw: serde_json::Value = self.request_value(reqwest::Method::GET, &path, &q, None).await?;
         let items = match raw {
             serde_json::Value::Array(a) => a,
-            serde_json::Value::Object(m) => m
-                .get("issues")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default(),
+            serde_json::Value::Object(m) => match m.get("issues").and_then(|v| v.as_array()) {
+                Some(a) => a.clone(),
+                None => {
+                    return Err(PlaneError::Api {
+                        message: format!(
+                            "unexpected shape from {path}: expected an 'issues' array in the object"
+                        ),
+                    })
+                }
+            },
             _ => {
                 return Err(PlaneError::Api {
                     message: format!(
@@ -1389,6 +1394,20 @@ fn is_sensitive_key(key: &str) -> bool {
     )
 }
 
+/// First 160 characters of a body for an error message, redacted when the body
+/// looks like it may carry credentials (token/password/secret), which could
+/// otherwise leak into logs.
+fn snippet_or_redact(body: &str) -> String {
+    let lower = body.to_ascii_lowercase();
+    if ["api_key", "token", "password", "authorization", "secret"]
+        .iter()
+        .any(|k| lower.contains(k))
+    {
+        return "<redacted: body may contain credentials>".to_string();
+    }
+    body.chars().take(160).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1707,5 +1726,54 @@ mod http_tests {
             .unwrap();
         assert!(items.is_empty());
         m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_work_items_rejects_unexpected_shape() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#""just a string""#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let err = client.search_work_items("x", None, 20).await.unwrap_err();
+        let PlaneError::Api { message } = err else {
+            panic!("expected Api error")
+        };
+        assert!(message.contains("unexpected shape"), "{message}");
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn invalid_json_error_includes_status_and_body_snippet() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/users/me/")
+            .with_status(200)
+            .with_header("content-type", "text/html")
+            .with_body("<html>proxy error</html>")
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let err = client.get_me().await.unwrap_err();
+        let PlaneError::Api { message } = err else {
+            panic!("expected Api error")
+        };
+        assert!(message.contains("HTTP 200"), "{message}");
+        assert!(message.contains("<html>proxy error</html>"), "{message}");
+        m.assert_async().await;
+    }
+
+    #[test]
+    fn error_snippet_redacts_credential_like_bodies() {
+        let snippet = snippet_or_redact(r#"{"api_key":"supersecret","name":"x"}"#);
+        assert!(snippet.contains("redacted"), "{snippet}");
+        assert!(!snippet.contains("supersecret"));
+        let plain = snippet_or_redact("<html>ok</html>");
+        assert!(plain.contains("<html>ok</html>"));
     }
 }

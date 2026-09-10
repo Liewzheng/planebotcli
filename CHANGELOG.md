@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- A `CHANGELOG.md` entry is required for every change, written in the same pull
+  request that makes it, under this section (`AGENTS.md` rule 7).
+- Repository workflow conventions (`AGENTS.md`): every change is tracked by a
+  work item, branched off `integration-main`, and landed through a pull request;
+  `main`, `master`, and `dev` take no direct merges.
+- A `reng` review gate on pull requests: the report is published to the PR, read
+  no earlier than five minutes later, and every finding is answered before the
+  merge is requested.
+- A Chinese edition of the CLI command reference,
+  `docs/cli-command-reference.zh.md`, alongside the English one.
+
+### Changed
+- The maintainer merges pull requests; the agent that opened one no longer does.
+- Release notes accumulate under `## [Unreleased]` as changes land. A release
+  renames that section to `## [<version>] - YYYY-MM-DD`, instead of reconstructing
+  the entries at release time.
+- The CLI command reference was rewritten for the Rust line, covering all 58
+  subcommands; the previous one still described the 0.7.0 Python line.
+
 ## [1.1.0] - 2026-09-10
 
 ### Added

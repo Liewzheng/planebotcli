@@ -141,7 +141,7 @@ fn read_first_existing(paths: &[PathBuf]) -> HashMap<String, String> {
             return values;
         }
         eprintln!(
-            "warning: {} is empty or unreadable; trying the next config location",
+            "warning: {} is empty or could not be read, so it was skipped; use another config location or set PLANE_* environment variables",
             path.display()
         );
     }
@@ -185,9 +185,20 @@ fn write_config_file(
     workspace: &str,
 ) -> std::io::Result<()> {
     let content = if path.extension().is_some_and(|ext| ext == "toml") {
-        format!(
-            "base_url = \"{base_url}\"\napi_key = \"{api_key}\"\nworkspace = \"{workspace}\"\n"
-        )
+        let mut map = toml::map::Map::new();
+        map.insert(
+            "base_url".to_string(),
+            toml::Value::String(base_url.to_string()),
+        );
+        map.insert(
+            "api_key".to_string(),
+            toml::Value::String(api_key.to_string()),
+        );
+        map.insert(
+            "workspace".to_string(),
+            toml::Value::String(workspace.to_string()),
+        );
+        toml::Value::Table(map).to_string()
     } else {
         format!("base_url={base_url}\napi_key={api_key}\nworkspace={workspace}\n")
     };
@@ -465,5 +476,21 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
         assert_eq!(values.get("api_key").map(String::as_str), Some("12345"));
         assert_eq!(values.get("workspace").map(String::as_str), Some("true"));
+    }
+
+    #[test]
+    fn toml_merges_top_level_and_auth_section() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("planebotcli_toml_mix_{}.toml", std::process::id()));
+        std::fs::write(
+            &path,
+            "base_url = \"http://top\"\n[auth]\napi_key = \"secret\"\nworkspace = \"ws\"\n",
+        )
+        .unwrap();
+        let values = read_config_file_from(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(values.get("base_url").map(String::as_str), Some("http://top"));
+        assert_eq!(values.get("api_key").map(String::as_str), Some("secret"));
+        assert_eq!(values.get("workspace").map(String::as_str), Some("ws"));
     }
 }

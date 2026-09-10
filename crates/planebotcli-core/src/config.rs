@@ -1,7 +1,9 @@
-//! Configuration with precedence: CLI flags > env vars > `~/.plane_api`.
+//! Configuration with precedence: CLI flags > env vars > config file.
 //!
-//! Mirrors the removed Python line's config module: the config file is `key=value` lines with
-//! lowercase keys (`base_url`, `api_key`, `workspace`), `#` comments, chmod 600.
+//! The config file is discovered from several locations, highest priority first:
+//! `~/.config/pbot/config.toml` (TOML), `~/.pbot`, `~/.planecli`, then the legacy
+//! `~/.plane_api` (all `key=value` lines with lowercase keys). `configure` keeps writing
+//! `~/.plane_api` for backward compatibility.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -17,14 +19,38 @@ pub struct Config {
 
 const CONFIG_FILE: &str = ".plane_api";
 
+/// The path `pbot configure` writes to — the legacy `~/.plane_api`, unchanged for
+/// backward compatibility. Reads, by contrast, consult every candidate.
 pub fn config_file_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(CONFIG_FILE)
 }
 
+/// Candidate config files, highest priority first. The first one that exists is read;
+/// a higher-priority file fully shadows the ones below it.
+pub fn config_file_candidates() -> Vec<PathBuf> {
+    let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    vec![
+        home.join(".config/pbot/config.toml"),
+        home.join(".pbot"),
+        home.join(".planecli"),
+        home.join(CONFIG_FILE),
+    ]
+}
+
+/// Read config pairs from a file — TOML when the extension is `.toml`, otherwise
+/// `key=value` lines (lowercase keys, `#` comments).
+pub fn read_config_file_from(path: &Path) -> HashMap<String, String> {
+    if path.extension().is_some_and(|ext| ext == "toml") {
+        read_toml_config(path)
+    } else {
+        read_key_value_config(path)
+    }
+}
+
 /// Read `key=value` pairs from a config file (lowercase keys, `#` comments).
-pub fn read_config_file_from(path: &PathBuf) -> HashMap<String, String> {
+fn read_key_value_config(path: &Path) -> HashMap<String, String> {
     let mut values = HashMap::new();
     let Ok(content) = std::fs::read_to_string(path) else {
         return values;
@@ -46,8 +72,45 @@ pub fn read_config_file_from(path: &PathBuf) -> HashMap<String, String> {
     values
 }
 
+/// Parse a TOML config file: top-level `base_url` / `api_key` / `workspace`,
+/// with an optional `[auth]` section as fallback.
+fn read_toml_config(path: &Path) -> HashMap<String, String> {
+    let mut values = HashMap::new();
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return values;
+    };
+    let Ok(doc) = content.parse::<toml::Value>() else {
+        return values;
+    };
+    for key in ["base_url", "api_key", "workspace"] {
+        let value = doc
+            .get(key)
+            .and_then(toml::Value::as_str)
+            .or_else(|| {
+                doc.get("auth")
+                    .and_then(|t| t.get(key))
+                    .and_then(toml::Value::as_str)
+            });
+        if let Some(v) = value {
+            values.insert(key.to_string(), v.to_string());
+        }
+    }
+    values
+}
+
+/// First existing candidate among `paths` wins; its parsed pairs are returned.
+fn read_first_existing(paths: &[PathBuf]) -> HashMap<String, String> {
+    for path in paths {
+        if path.is_file() {
+            return read_config_file_from(path);
+        }
+    }
+    HashMap::new()
+}
+
+/// Read the first existing config file from the candidate list (highest priority first).
 pub fn read_config_file() -> HashMap<String, String> {
-    read_config_file_from(&config_file_path())
+    read_first_existing(&config_file_candidates())
 }
 
 /// Save config to `~/.plane_api` with `key=value` lines (chmod 600),
@@ -177,6 +240,81 @@ mod tests {
         assert_eq!(values.get("base_url").map(String::as_str), Some("http://x"));
         assert_eq!(values.get("api_key").map(String::as_str), Some("abc"));
         assert!(!values.contains_key("workspace"));
+    }
+
+    #[test]
+    fn parses_toml_config_top_level() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("planebotcli_test_toml_{}.toml", std::process::id()));
+        std::fs::write(
+            &path,
+            "base_url = \"http://x\"\napi_key = \"abc\"\nworkspace = \"ws\"\n",
+        )
+        .unwrap();
+        let values = read_config_file_from(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(values.get("base_url").map(String::as_str), Some("http://x"));
+        assert_eq!(values.get("api_key").map(String::as_str), Some("abc"));
+        assert_eq!(values.get("workspace").map(String::as_str), Some("ws"));
+    }
+
+    #[test]
+    fn parses_toml_config_auth_section() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("planebotcli_test_toml_auth_{}.toml", std::process::id()));
+        std::fs::write(
+            &path,
+            "[auth]\nbase_url = \"http://y\"\napi_key = \"def\"\nworkspace = \"ws2\"\n",
+        )
+        .unwrap();
+        let values = read_config_file_from(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(values.get("base_url").map(String::as_str), Some("http://y"));
+        assert_eq!(values.get("api_key").map(String::as_str), Some("def"));
+        assert_eq!(values.get("workspace").map(String::as_str), Some("ws2"));
+    }
+
+    #[test]
+    fn toml_top_level_wins_over_auth_section() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("planebotcli_test_toml_prio_{}.toml", std::process::id()));
+        std::fs::write(
+            &path,
+            "base_url = \"http://top\"\n[auth]\nbase_url = \"http://auth\"\n",
+        )
+        .unwrap();
+        let values = read_config_file_from(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(values.get("base_url").map(String::as_str), Some("http://top"));
+    }
+
+    #[test]
+    fn first_existing_candidate_wins() {
+        let dir = std::env::temp_dir().join(format!("planebotcli_cand_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let high = dir.join("high");
+        let low = dir.join("low");
+        std::fs::write(&high, "base_url=http://high\n").unwrap();
+        std::fs::write(&low, "base_url=http://low\n").unwrap();
+        let values = read_first_existing(&[high.clone(), low.clone()]);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(values.get("base_url").map(String::as_str), Some("http://high"));
+    }
+
+    #[test]
+    fn missing_file_reads_nothing() {
+        let values = read_config_file_from(&PathBuf::from("/nonexistent/planebotcli-config"));
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn candidates_order_is_high_to_low() {
+        let home = dirs::home_dir().unwrap();
+        let c = config_file_candidates();
+        assert_eq!(c[0], home.join(".config/pbot/config.toml"));
+        assert!(c.contains(&home.join(".pbot")));
+        assert!(c.contains(&home.join(".planecli")));
+        assert!(c.contains(&home.join(".plane_api")));
     }
 
     #[test]

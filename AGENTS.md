@@ -48,7 +48,7 @@ defaults, clippy clean at `-D warnings`.
 
 ```
 crates/
-  planebotcli-core       # Config (precedence: flags > env > ~/.plane_api), PlaneError + exit codes
+  planebotcli-core       # Config (precedence: flags > env > config file, discovered from ~/.config/pbot/config.toml, ~/.pbot, ~/.planecli, ~/.plane_api), PlaneError + exit codes
   planebotcli-types      # serde DTOs for every API resource, plus the *Write request bodies
   planebotcli-cache      # TTL disk cache: one JSON file per key, invalidate by key prefix
   planebotcli-client     # reqwest async client for the Plane v1 API: X-Api-Key, cursor pagination,

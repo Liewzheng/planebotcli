@@ -37,7 +37,7 @@ Human-readable tables are written to **stderr**, machine-readable JSON to **stdo
 | `PLANE_API_KEY` | Service token (`plane_api_...`). |
 | `PLANE_WORKSPACE` | Workspace slug (not the instance name). |
 
-Configuration file `~/.plane_api` — `key=value` lines with lowercase keys `base_url`, `api_key`, `workspace`; `chmod 600`. Precedence: CLI flags > environment variables > `~/.plane_api`.
+Configuration is discovered from several files, highest priority first: `~/.config/pbot/config.toml` (TOML with top-level `base_url` / `api_key` / `workspace`, optionally under `[auth]`), `~/.pbot`, `~/.planecli`, then the legacy `~/.plane_api` (`key=value` lines with lowercase keys; `chmod 600`). Precedence: CLI flags > environment variables > config file. `pbot configure` keeps writing `~/.plane_api`.
 
 > Self-hosted instances behind a proxy: run `env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy pbot ...` so CLI traffic reaches the instance directly.
 
@@ -57,7 +57,7 @@ Configuration file `~/.plane_api` — `key=value` lines with lowercase keys `bas
 | Command | Purpose |
 |---|---|
 | [`whoami`](#pbot-whoami) | Show the authenticated user. |
-| [`configure`](#pbot-configure) | Write `~/.plane_api` interactively. |
+| [`configure`](#pbot-configure) | Write credentials interactively (to `~/.plane_api`). |
 | [`user`](#pbot-user) | Workspace members. |
 | [`cache`](#pbot-cache) | Manage the local disk cache. |
 | [`project`](#pbot-project) | Projects. |
@@ -84,7 +84,7 @@ pbot whoami [--json]
 
 ## pbot configure
 
-Write credentials to `~/.plane_api` interactively (prompts for base URL, API key, workspace slug), then clear the disk cache.
+Write credentials interactively (prompts for base URL, API key, workspace slug), saving to `~/.plane_api`, then clear the disk cache.
 
 ```
 pbot configure

@@ -30,11 +30,12 @@ cargo install --path crates/planebotcli-cli --locked   # from a checkout
 ```
 
 Credentials: environment variables `PLANE_BASE_URL`, `PLANE_API_KEY`,
-`PLANE_WORKSPACE`, or the `~/.plane_api` file (lowercase `key=value` lines:
-`base_url`, `api_key`, `workspace`). Precedence: CLI flags > env vars >
-`~/.plane_api`. See
+`PLANE_WORKSPACE`, or a config file discovered from `~/.config/pbot/config.toml`
+(TOML), `~/.pbot`, `~/.planecli`, then the legacy `~/.plane_api` (lowercase
+`key=value` lines: `base_url`, `api_key`, `workspace`). Precedence: CLI flags >
+env vars > config file. See
 [crates/planebotcli-core/src/config.rs](../crates/planebotcli-core/src/config.rs)
-for the file format and the key-to-env-var mapping.
+for the file formats and the key-to-env-var mapping.
 
 ## Key concepts
 

@@ -1395,7 +1395,10 @@ fn is_sensitive_key(key: &str) -> bool {
 }
 
 /// Substrings that hint a body may carry credentials and must not be echoed.
-const SENSITIVE_SUBSTRINGS: [&str; 5] = ["api_key", "token", "password", "authorization", "secret"];
+const SENSITIVE_SUBSTRINGS: [&str; 9] = [
+    "api_key", "token", "password", "authorization", "secret", "passwd", "jwt", "bearer",
+    "secret_key",
+];
 
 /// First 160 characters of a body for an error message, redacted when the head
 /// looks like it may carry credentials (token/password/secret), which could

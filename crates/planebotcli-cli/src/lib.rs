@@ -3485,6 +3485,7 @@ async fn cmd_wi_search(
     };
     let views: Vec<Value> = items
         .iter()
+        .take(limit)
         .map(|item| {
             let identifier = item
                 .project_identifier

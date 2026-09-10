@@ -511,9 +511,20 @@ impl PlaneClient {
             serde_json::Value::Object(m) => match m.get("issues").and_then(|v| v.as_array()) {
                 Some(a) => a.clone(),
                 None => {
+                    let actual = m
+                        .get("issues")
+                        .map(|v| match v {
+                            serde_json::Value::Null => "null",
+                            serde_json::Value::String(_) => "a string",
+                            serde_json::Value::Bool(_) => "a bool",
+                            serde_json::Value::Number(_) => "a number",
+                            serde_json::Value::Array(_) => "an array",
+                            serde_json::Value::Object(_) => "an object",
+                        })
+                        .unwrap_or("absent");
                     return Err(PlaneError::Api {
                         message: format!(
-                            "unexpected shape from {path}: expected an 'issues' array in the object"
+                            "unexpected shape from {path}: expected an 'issues' array in the object, found {actual}"
                         ),
                     })
                 }
@@ -1395,9 +1406,9 @@ fn is_sensitive_key(key: &str) -> bool {
 }
 
 /// Substrings that hint a body may carry credentials and must not be echoed.
-const SENSITIVE_SUBSTRINGS: [&str; 9] = [
+const SENSITIVE_SUBSTRINGS: [&str; 11] = [
     "api_key", "token", "password", "authorization", "secret", "passwd", "jwt", "bearer",
-    "secret_key",
+    "secret_key", "access_token", "private_key",
 ];
 
 /// First 160 characters of a body for an error message, redacted when the head
@@ -1800,11 +1811,60 @@ mod http_tests {
             r#"{"api_key":"supersecret","name":"x"}"#,
             "token=abc123",
             "Bearer secret-token",
+            "access_token=zzz",
         ] {
             let snippet = snippet_or_redact(body);
             assert!(snippet.contains("redacted"), "{snippet}");
         }
         let plain = snippet_or_redact("<html>ok</html>");
         assert!(plain.contains("<html>ok</html>"));
+    }
+
+    #[test]
+    fn error_snippet_truncates_at_160_chars() {
+        let short = snippet_or_redact(&"x".repeat(160));
+        assert_eq!(short.len(), 160);
+        let long = snippet_or_redact(&"y".repeat(300));
+        assert_eq!(long.len(), 160);
+    }
+
+    #[tokio::test]
+    async fn search_work_items_rejects_malformed_item_in_issues() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"issues":[{"name":"no id here"}]}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let err = client.search_work_items("x", None, 20).await.unwrap_err();
+        let PlaneError::Api { message } = err else {
+            panic!("expected Api error")
+        };
+        assert!(message.contains("invalid search result"), "{message}");
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_work_items_sends_zero_limit() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("search".to_string(), "x".to_string()),
+                mockito::Matcher::UrlEncoded("limit".to_string(), "0".to_string()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"issues":[]}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let items = client.search_work_items("x", None, 0).await.unwrap();
+        assert!(items.is_empty());
+        m.assert_async().await;
     }
 }

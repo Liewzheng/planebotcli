@@ -8,27 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
-- Every change now carries a `CHANGELOG.md` entry written in the same pull
-  request that makes the change, under `## [Unreleased]` — code, documentation,
-  and repository process alike. Release notes are cut by renaming that section,
-  so nothing is reconstructed after the fact.
-- Repository workflow conventions in `AGENTS.md`: every change is tracked by a
-  work item, developed on its own branch off `integration-main`, and landed
-  through a pull request. `main`, `master`, and `dev` no longer take direct
-  merges, and a completed change is recorded on its work item with the branch,
-  the pull request, and what was verified.
+- A `CHANGELOG.md` entry is required for every change, written in the same pull
+  request that makes it, under this section (`AGENTS.md` rule 7).
+- Repository workflow conventions (`AGENTS.md`): every change is tracked by a
+  work item, branched off `integration-main`, and landed through a pull request;
+  `main`, `master`, and `dev` take no direct merges.
+- A `reng` review gate on pull requests: the report is published to the PR, read
+  no earlier than five minutes later, and every finding is answered before the
+  merge is requested.
+- A Chinese edition of the CLI command reference,
+  `docs/cli-command-reference.zh.md`, alongside the English one.
 
 ### Changed
-- Pull requests are reviewed by the local `reng` engine before they merge, and
-  the maintainer performs the merge rather than the agent that opened it.
-  `AGENTS.md` documents the gate: publish the review, wait five minutes, answer
-  every finding (fix it, escalate it, or refute it with evidence), then ask for
-  the merge. Findings that cannot be answered block the merge.
-- The CLI command reference was rewritten for the Rust line (1.1.0) — every
-  subcommand, flag, alias, and example, in the layout `gh` and `glab` use for
-  their manuals — and a Chinese edition was added alongside it
-  (`docs/cli-command-reference.zh.md`), with commands and flags left in English.
-  The previous reference still described the 0.7.0 Python line.
+- The maintainer merges pull requests; the agent that opened one no longer does.
+- Release notes accumulate under `## [Unreleased]` as changes land. A release
+  renames that section to `## [<version>] - YYYY-MM-DD`, instead of reconstructing
+  the entries at release time.
+- The CLI command reference was rewritten for the Rust line, covering all 58
+  subcommands; the previous one still described the 0.7.0 Python line.
 
 ## [1.1.0] - 2026-09-10
 

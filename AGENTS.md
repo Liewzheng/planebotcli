@@ -86,10 +86,12 @@ small to track" or "too small for a PR" exemption.
 6. **Resync after every merge** — `git fetch planebotcli` and fast-forward `integration-main` — so
    the next task branch starts from the merged state.
 7. **Record the change in `CHANGELOG.md` in the same PR.** Every change gets a Keep a Changelog
-   entry under `## [Unreleased]` — code, docs, and repository process alike, no exemptions. Write it
-   in the file's existing voice: a CLI change names the command and flag; a repository-process change
-   says what the process now is. Keep internal tracker IDs out (the Plane item is the trace, the
-   changelog is for readers).
+   entry under `## [Unreleased]` — code, docs, and repository process alike, no exemptions. A change
+   that is reverted before release is edited out of its entry rather than answered by a second one.
+   Write it in the file's existing voice, one or two sentences: a CLI change names the command and
+   flag, a repository-process change says what the process now is, and neither restates what
+   `AGENTS.md` already explains in full. Keep internal tracker IDs out (the Plane item is the trace,
+   the changelog is for readers).
 
 ### Review gate
 

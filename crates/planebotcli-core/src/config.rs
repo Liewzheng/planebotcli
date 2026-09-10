@@ -19,20 +19,17 @@ pub struct Config {
 
 const CONFIG_FILE: &str = ".plane_api";
 
-/// The path `pbot configure` writes to — the highest-priority existing candidate, else
-/// the legacy `~/.plane_api`. Writes therefore land in the file reads actually consult.
+/// The path `pbot configure` writes to — the first candidate that yields a valid
+/// configuration (mirroring how reads select one), else the legacy `~/.plane_api`.
+/// Writes therefore land in the file reads actually consult.
 pub fn config_file_path() -> PathBuf {
     let home = home_dir();
-    active_config_path(&config_file_candidates(), &home.join(CONFIG_FILE))
-}
-
-/// Select the first existing candidate, else the legacy path.
-fn active_config_path(candidates: &[PathBuf], legacy: &Path) -> PathBuf {
-    candidates
-        .iter()
-        .find(|c| c.is_file())
-        .cloned()
-        .unwrap_or_else(|| legacy.to_path_buf())
+    for candidate in config_file_candidates() {
+        if candidate.is_file() && !read_config_file_from(&candidate).is_empty() {
+            return candidate;
+        }
+    }
+    home.join(CONFIG_FILE)
 }
 
 fn home_dir() -> PathBuf {
@@ -135,9 +132,9 @@ fn read_first_existing(paths: &[PathBuf]) -> HashMap<String, String> {
         if !path.is_file() {
             continue;
         }
+        warn_if_world_readable(path);
         let values = read_config_file_from(path);
         if !values.is_empty() {
-            warn_if_world_readable(path);
             return values;
         }
         eprintln!(
@@ -426,28 +423,52 @@ mod tests {
     }
 
     #[test]
-    fn active_path_prefers_existing_candidate() {
-        let dir = std::env::temp_dir().join(format!("planebotcli_ap_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let existing = dir.join("config.toml");
-        std::fs::write(&existing, "base_url = \"http://x\"\n").unwrap();
-        let legacy = dir.join("legacy");
-        let chosen = active_config_path(
-            &[existing.clone(), dir.join("missing")],
-            &legacy,
-        );
-        std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(chosen, existing);
+    fn invalid_toml_returns_empty_without_panicking() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("planebotcli_bad_toml_{}.toml", std::process::id()));
+        std::fs::write(&path, "base_url = [unclosed\napi_key = {").unwrap();
+        let values = read_config_file_from(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert!(values.is_empty());
     }
 
     #[test]
-    fn active_path_falls_back_to_legacy_when_none_exist() {
-        let dir = std::env::temp_dir().join(format!("planebotcli_ap2_{}", std::process::id()));
+    fn nested_table_value_is_ignored() {
+        let mut path = std::env::temp_dir();
+        path.push(format!("planebotcli_nested_{}.toml", std::process::id()));
+        std::fs::write(&path, "base_url = { host = \"http://x\" }\n").unwrap();
+        let values = read_config_file_from(&path);
+        std::fs::remove_file(&path).unwrap();
+        assert!(!values.contains_key("base_url"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_file_is_skipped_for_next_candidate() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("planebotcli_noread_{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let legacy = dir.join("legacy");
-        let chosen = active_config_path(&[dir.join("a"), dir.join("b")], &legacy);
+        let locked = dir.join("locked");
+        let filled = dir.join("filled");
+        std::fs::write(&locked, "base_url=http://no\n").unwrap();
+        std::fs::write(&filled, "base_url=http://ok\n").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let values = read_first_existing(&[locked.clone(), filled.clone()]);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600)).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(chosen, legacy);
+        assert_eq!(values.get("base_url").map(String::as_str), Some("http://ok"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_config_toml_writes_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut path = std::env::temp_dir();
+        path.push(format!("planebotcli_save_toml_perm_{}.toml", std::process::id()));
+        write_config_file(&path, "http://x", "s", "w").unwrap();
+        let permissions = std::fs::metadata(&path).unwrap().permissions();
+        assert_eq!(permissions.mode() & 0o777, 0o600);
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]

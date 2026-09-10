@@ -1,7 +1,7 @@
 ---
 status: proposed
 date: YYYY-MM-DD
-decision-makers: pbotcli maintainers
+decision-makers: planebotcli maintainers
 ---
 
 # ADR-NNNN: {Short title of the decision}

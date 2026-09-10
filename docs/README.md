@@ -42,7 +42,7 @@ for the file format and the key-to-env-var mapping.
   resource is expected; close names resolve via token-sort-ratio matching
   (threshold 60).
 - **Dual output contract** — tables go to **stderr**, JSON to **stdout**:
-  `planebotcli wi ls --json 2>/dev/null` yields clean JSON.
+  `pbot wi ls --json 2>/dev/null` yields clean JSON.
 - **Caching** — reads are cached on disk with per-resource TTLs;
-  `--no-cache` bypasses it for one command; `planebotcli cache clear` resets.
+  `--no-cache` bypasses it for one command; `pbot cache clear` resets.
 - **`me`** — the authenticated user, valid wherever an assignee is expected.

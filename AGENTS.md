@@ -148,7 +148,7 @@ small to track" or "too small for a PR" exemption.
    and at merge. Set the state to match reality: `In Progress` once work begins, `Done` only after
    the merge is on `main`. A finished change with no comment on its item is not done.
 3. **Branch per task**, off `integration-main`, named `<type>/<task>-<slug>` (e.g.
-   `feat/planecli-42-relations-remove`). Never commit a task's work straight onto an integration or
+   `feat/PLANECLI-42-relations-remove`). Never commit a task's work straight onto an integration or
    release branch.
 4. **Open a pull request — and stop there.** Push the branch to the `planebotcli` remote and open a
    PR against `integration-main` (`gh pr create --repo Liewzheng/planebotcli --base

@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Changed
 - The maintainer merges pull requests; the agent that opened one no longer does.
 - The CLI is documented as an independent distribution: changes land on the
-  `integration/selfhost` line and are never opened as issues or pull requests against
+  `integration-main` line and are never opened as issues or pull requests against
   Plane upstream. The skill's comment format and gotchas describe this build rather than
   an upstream one.
 - Release notes accumulate under `## [Unreleased]` as changes land. A release
@@ -37,8 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `build`, `run`, `test`, `test-v`, `lint`, `format`, `check`, `e2e`, `clean`)
   wrap cargo, clippy, rustfmt, and `scripts/e2e.sh` instead of uv, pytest, and
   ruff.
-- The project name is now `pbotcli`: the retired spelling is gone from the
-  repository, and every shell example quotes the installed `pbot` binary.
+- The project is named `planebotcli` (the repository, the workspace crates, and the
+  installed binary); `pbot` is the short call name used in every example.
+- The stale descriptions left by the rename were cleaned up: the skill now matches the
+  Rust line's behaviour (`-d` wraps plain text, `--desc-md` is the markdown path,
+  `relations` is a first-class command group, and the long-lived branches are
+  `integration-main` / `main`); the `pbotcli` spelling was dropped in favour of
+  `planebotcli` everywhere; the GitHub repository description no longer calls the
+  project a fork of `plane-cli`.
 
 ### Removed
 - The Python implementation was removed — its source package, tests,

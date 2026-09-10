@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-07-03
-decision-makers: pbotcli maintainers
+decision-makers: planebotcli maintainers
 ---
 
 # ADR-0004: Disk cache with volatility-based TTLs and instance-scoped keys

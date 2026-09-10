@@ -1,7 +1,7 @@
 ---
 status: accepted
 date: 2026-07-03
-decision-makers: pbotcli maintainers
+decision-makers: planebotcli maintainers
 ---
 
 # ADR-0003: SDK escape hatches for API/model mismatches

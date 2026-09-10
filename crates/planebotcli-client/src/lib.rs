@@ -1394,18 +1394,19 @@ fn is_sensitive_key(key: &str) -> bool {
     )
 }
 
-/// First 160 characters of a body for an error message, redacted when the body
+/// First 160 characters of a body for an error message, redacted when the head
 /// looks like it may carry credentials (token/password/secret), which could
 /// otherwise leak into logs.
 fn snippet_or_redact(body: &str) -> String {
-    let lower = body.to_ascii_lowercase();
+    let head: String = body.chars().take(160).collect();
+    let lower = head.to_ascii_lowercase();
     if ["api_key", "token", "password", "authorization", "secret"]
         .iter()
         .any(|k| lower.contains(k))
     {
         return "<redacted: body may contain credentials>".to_string();
     }
-    body.chars().take(160).collect()
+    head
 }
 
 #[cfg(test)]
@@ -1768,11 +1769,38 @@ mod http_tests {
         m.assert_async().await;
     }
 
+    #[tokio::test]
+    async fn search_work_items_rejects_empty_object_and_null() {
+        for body in [r#"{}"#, r#"null"#] {
+            let mut server = mockito::Server::new_async().await;
+            let m = server
+                .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+                .match_query(mockito::Matcher::Any)
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(body)
+                .create_async()
+                .await;
+            let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+            let err = client.search_work_items("x", None, 20).await.unwrap_err();
+            let PlaneError::Api { message } = err else {
+                panic!("expected Api error")
+            };
+            assert!(message.contains("unexpected shape"), "{message}");
+            m.assert_async().await;
+        }
+    }
+
     #[test]
     fn error_snippet_redacts_credential_like_bodies() {
-        let snippet = snippet_or_redact(r#"{"api_key":"supersecret","name":"x"}"#);
-        assert!(snippet.contains("redacted"), "{snippet}");
-        assert!(!snippet.contains("supersecret"));
+        for body in [
+            r#"{"api_key":"supersecret","name":"x"}"#,
+            "token=abc123",
+            "Bearer secret-token",
+        ] {
+            let snippet = snippet_or_redact(body);
+            assert!(snippet.contains("redacted"), "{snippet}");
+        }
         let plain = snippet_or_redact("<html>ok</html>");
         assert!(plain.contains("<html>ok</html>"));
     }

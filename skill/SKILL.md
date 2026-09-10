@@ -23,7 +23,7 @@ cargo install --path <repo>/crates/planebotcli-cli --locked   # repo = integrati
 
 ## Key Concepts
 
-- **Fuzzy resolution**: every resource argument (project, state, user, work item) accepts a name, an identifier (`ABC-123`), or a UUID; close names resolve. **Projects** prefer exact identifiers and names (case-insensitive) over fuzzy matches, and print a warning when only a fuzzy match exists; **states** prefer exact names with a fuzzy fall-back; **labels** match exactly — a missing label errors with the available list instead of silently applying the closest one. User and work-item resolution are unchanged (fuzzy by name, exact by identifier/UUID).
+- **Fuzzy resolution**: every resource argument (project, state, user, work item) accepts a name, an identifier (`ABC-123`), or a UUID; close names resolve. **Projects** prefer exact identifiers and names (case-insensitive) over fuzzy matches, and print a warning when only a fuzzy match exists; **states** prefer exact names with a fuzzy fall-back; **labels** match exactly by name (or UUID) — a missing label errors with the available list instead of silently applying the closest one. User and work-item resolution are unchanged (fuzzy by name, exact by identifier/UUID).
 - **`me`**: the authenticated user, valid wherever an assignee is expected.
 - **`--json`**: pass it on every command; JSON goes to stdout, the human table to stderr.
 - **Caching**: reads are cached on disk. `--no-cache` bypasses it for one command; `pbot cache clear` resets it. Read back your own writes with `--no-cache`.

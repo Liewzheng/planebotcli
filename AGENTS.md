@@ -85,6 +85,11 @@ small to track" or "too small for a PR" exemption.
    `git push <remote> <branch>:main`, no `--force`, no local fast-forward that skips review.
 6. **Resync after every merge** — `git fetch planebotcli` and fast-forward `integration-main` — so
    the next task branch starts from the merged state.
+7. **Record the change in `CHANGELOG.md` in the same PR.** Every change gets a Keep a Changelog
+   entry under `## [Unreleased]` — code, docs, and repository process alike, no exemptions. Write it
+   in the file's existing voice: a CLI change names the command and flag; a repository-process change
+   says what the process now is. Keep internal tracker IDs out (the Plane item is the trace, the
+   changelog is for readers).
 
 ### Review gate
 
@@ -165,7 +170,10 @@ fork PR branches.
 
 - Keep SemVer: bump the minor for new commands/flags, the patch for bug fixes. The single version
   lives in the workspace root `Cargo.toml` (`[workspace.package] version`).
-- Append a Keep a Changelog section to `CHANGELOG.md` in upstream style, without internal tracker IDs.
+- Entries accumulate under `## [Unreleased]` as each change lands (see Task workflow rule 7) —
+  never batched in at release time, when nobody remembers what shipped. Cut a release by renaming
+  that section to `## [<version>] - YYYY-MM-DD`, in the file's existing Keep a Changelog style and
+  without internal tracker IDs.
 - Cut a release by committing `release: <version>` on `integration-main`, pushing that branch, and
   opening a PR from `integration-main` into the planebotcli remote's `main`:
   `gh pr create --repo Liewzheng/planebotcli --base main --head integration-main`. A release PR goes

@@ -19,13 +19,15 @@ pub struct Config {
 
 const CONFIG_FILE: &str = ".plane_api";
 
-/// The path `pbot configure` writes to — the first candidate that yields a valid
-/// configuration (mirroring how reads select one), else the legacy `~/.plane_api`.
-/// Writes therefore land in the file reads actually consult.
+/// The path `pbot configure` writes to — the highest-priority candidate the user has
+/// created, else the legacy `~/.plane_api`. A freshly created (even empty) file is still
+/// written to: the write makes it valid, and reads then hit it. A world-readable target
+/// is flagged.
 pub fn config_file_path() -> PathBuf {
     let home = home_dir();
     for candidate in config_file_candidates() {
-        if candidate.is_file() && !read_config_file_from(&candidate).is_empty() {
+        if candidate.is_file() {
+            warn_if_world_readable(&candidate);
             return candidate;
         }
     }
@@ -138,7 +140,7 @@ fn read_first_existing(paths: &[PathBuf]) -> HashMap<String, String> {
             return values;
         }
         eprintln!(
-            "warning: {} is empty or could not be read, so it was skipped; use another config location or set PLANE_* environment variables",
+            "warning: {} exists but yielded no recognized keys, so it was skipped; use another config location or set PLANE_* environment variables",
             path.display()
         );
     }
@@ -195,7 +197,8 @@ fn write_config_file(
             "workspace".to_string(),
             toml::Value::String(workspace.to_string()),
         );
-        toml::Value::Table(map).to_string()
+        toml::to_string_pretty(&toml::Value::Table(map))
+            .expect("serializing string values to TOML cannot fail")
     } else {
         format!("base_url={base_url}\napi_key={api_key}\nworkspace={workspace}\n")
     };

@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.5] - 2026-09-10
+
+### Fixed
+- `--content-md` keeps the fence info string's language: ```` ```bash ````
+  now emits `<code class="language-bash">`, so the web code block records
+  the language (and highlights) instead of showing as plain text.
+
 ## [1.0.4] - 2026-09-10
 
 ### Fixed

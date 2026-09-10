@@ -92,22 +92,6 @@ pub fn body_to_html(body: &str) -> String {
     result
 }
 
-/// Extract fenced code blocks with full HTML escaping (md flavor).
-///
-/// `body_to_html`'s shared helper escapes only `& < >`; Python's markdown
-/// converter escapes quotes as well (`html.escape`), so the md path extracts
-/// its own blocks to stay byte-identical to `body_html.py::md_to_html`.
-fn md_extract_code_blocks(text: &str) -> (String, Vec<String>) {
-    let re = Regex::new(r"(?s)```[ \t]*\w*[ \t]*\n(.*?)```").unwrap();
-    let mut blocks: Vec<String> = Vec::new();
-    let held = re.replace_all(text, |caps: &regex::Captures<'_>| {
-        let code = html_escape::encode_quoted_attribute(caps[1].trim_matches('\n'));
-        blocks.push(format!("<pre><code>{code}</code></pre>"));
-        format!("\u{0}{}\u{0}", blocks.len() - 1)
-    });
-    (held.to_string(), blocks)
-}
-
 /// Apply the inline markdown subset to one block of user text.
 ///
 /// The text is HTML-escaped first (quotes included, like Python
@@ -242,54 +226,224 @@ fn flush(out: &mut Vec<String>, tag: &mut Option<&str>, items: &mut Vec<String>)
 
 /// Convert a markdown subset to the HTML Plane's editor stores.
 ///
-/// Supported: ATX headings (one to six hash marks, closing hashes stripped),
-/// unordered lists (dash, star, or plus bullets) and ordered lists
-/// (number-dot or number-paren), lists and paragraphs separated by blank
-/// lines, inline code spans, fenced code blocks (pre-wrapped code),
-/// bold/italic, and bare http(s) URLs (linkified). All user text is
-/// HTML-escaped before markup is applied — only the generated tags pass
-/// through unescaped. Mirrors `body_html.py::md_to_html`.
+/// Blocks are recognized line by line, so a heading may be followed by a list
+/// (or a paragraph by a table) without an intervening blank line:
+///
+/// * ATX headings (one to six hash marks, closing hashes stripped)
+/// * unordered lists (dash, star, or plus bullets) and ordered lists
+///   (number-dot or number-paren)
+/// * fenced code blocks (backtick or tilde fences, pre-wrapped code)
+/// * blockquotes (`>`), horizontal rules, and GitHub-style tables
+/// * paragraphs, where a single newline becomes `<br/>`
+///
+/// Inline: code spans, bold/italic, and bare http(s) URLs (linkified). All
+/// user text is HTML-escaped before markup is applied — only the generated
+/// tags pass through unescaped.
 pub fn md_to_html(md: &str) -> String {
-    let (text, blocks) = md_extract_code_blocks(md.trim());
-    let split = Regex::new(r"\n\s*\n").unwrap();
-    let ul = Regex::new(r"^[-*+][ \t]+").unwrap();
-    let ol = Regex::new(r"^\d{1,9}[.)][ \t]+").unwrap();
-    let heading = Regex::new(r"^(#{1,6})[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$").unwrap();
-    let token_only = Regex::new(r"^(?:\u{0}\d+\u{0}[ \t]*)+$").unwrap();
-    let mut parts: Vec<String> = Vec::new();
-    for chunk in split.split(&text) {
-        let chunk = chunk.trim();
-        if chunk.is_empty() {
+    let lines: Vec<&str> = md.trim().lines().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let raw = lines[i];
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            i += 1;
             continue;
         }
-        let lines: Vec<&str> = chunk.split('\n').collect();
-        let first = lines[0].trim();
-        if ul.is_match(first) || ol.is_match(first) {
-            parts.push(md_list(&lines));
+        // Fenced code block.
+        if let Some(fence) = md_fence(trimmed) {
+            let mut code: Vec<&str> = Vec::new();
+            i += 1;
+            while i < lines.len() && !md_fence_close(lines[i].trim_start(), fence) {
+                code.push(lines[i]);
+                i += 1;
+            }
+            if i < lines.len() {
+                i += 1; // consume the closing fence
+            }
+            let joined = code.join("\n");
+            let escaped = html_escape::encode_quoted_attribute(joined.trim_matches('\n'));
+            out.push_str(&format!("<pre><code>{escaped}</code></pre>"));
             continue;
         }
-        let heading = (lines.len() == 1)
-            .then(|| heading.captures(first))
-            .flatten();
-        if let Some(caps) = heading {
-            let level = caps.get(1).expect("level group").as_str().len();
-            let content = md_inline(caps.get(2).expect("content group").as_str());
-            parts.push(format!("<h{level}>{content}</h{level}>"));
+        // Horizontal rule.
+        if md_hrule(trimmed) {
+            out.push_str("<hr/>");
+            i += 1;
             continue;
         }
-        let converted = md_inline(chunk).replace('\n', "<br/>");
-        if token_only.is_match(chunk) {
-            // A chunk that is only a code block keeps its pre wrapper.
-            parts.push(converted);
-        } else {
-            parts.push(format!("<p>{converted}</p>"));
+        // ATX heading (closing hashes stripped).
+        if let Some((level, content)) = md_heading(trimmed) {
+            out.push_str(&format!("<h{level}>{}</h{level}>", md_inline(&content)));
+            i += 1;
+            continue;
+        }
+        // Blockquote: consecutive `>` lines become one quoted paragraph.
+        if trimmed.starts_with('>') {
+            let mut quoted: Vec<String> = Vec::new();
+            while i < lines.len() && lines[i].trim_start().starts_with('>') {
+                let body = lines[i].trim_start().strip_prefix('>').unwrap_or("");
+                quoted.push(body.strip_prefix(' ').unwrap_or(body).to_string());
+                i += 1;
+            }
+            let inner = md_inline(&quoted.join("\n")).replace('\n', "<br/>");
+            out.push_str(&format!("<blockquote><p>{inner}</p></blockquote>"));
+            continue;
+        }
+        // GitHub-style table: a header row followed by a `|---|` separator.
+        if trimmed.starts_with('|') && i + 1 < lines.len() && md_table_sep(lines[i + 1].trim()) {
+            let header = md_table_cells(trimmed);
+            let mut rows = String::from("<thead><tr>");
+            for cell in &header {
+                rows.push_str(&format!("<th>{}</th>", md_inline(cell)));
+            }
+            rows.push_str("</tr></thead><tbody>");
+            i += 2;
+            while i < lines.len() && lines[i].trim().starts_with('|') {
+                let cells = md_table_cells(lines[i].trim());
+                rows.push_str("<tr>");
+                for cell in &cells {
+                    rows.push_str(&format!("<td>{}</td>", md_inline(cell)));
+                }
+                rows.push_str("</tr>");
+                i += 1;
+            }
+            rows.push_str("</tbody>");
+            out.push_str(&format!("<table>{rows}</table>"));
+            continue;
+        }
+        // List: consecutive item lines (indented lines continue the block).
+        if md_list_item(trimmed) {
+            let mut block: Vec<&str> = Vec::new();
+            while i < lines.len() {
+                let line = lines[i];
+                let lt = line.trim();
+                if lt.is_empty() || (!md_list_item(lt) && !line.starts_with([' ', '\t'])) {
+                    break;
+                }
+                block.push(line);
+                i += 1;
+            }
+            out.push_str(&md_list(&block));
+            continue;
+        }
+        // Paragraph: run of lines up to the next blank line or block start.
+        let mut para: Vec<&str> = Vec::new();
+        while i < lines.len() {
+            let line = lines[i];
+            let lt = line.trim();
+            let starts_table =
+                lt.starts_with('|') && i + 1 < lines.len() && md_table_sep(lines[i + 1].trim());
+            if lt.is_empty()
+                || md_fence(lt).is_some()
+                || md_hrule(lt)
+                || md_heading(lt).is_some()
+                || lt.starts_with('>')
+                || md_list_item(lt)
+                || starts_table
+            {
+                break;
+            }
+            para.push(line);
+            i += 1;
+        }
+        let inner = md_inline(&para.join("\n")).replace('\n', "<br/>");
+        out.push_str(&format!("<p>{inner}</p>"));
+    }
+    out
+}
+
+/// Fence character of an opening code fence (backtick or tilde, three or more).
+fn md_fence(line: &str) -> Option<char> {
+    let c = line.chars().next()?;
+    if c != '`' && c != '~' {
+        return None;
+    }
+    (line.chars().take_while(|&x| x == c).count() >= 3).then_some(c)
+}
+
+/// Whether a line closes a fence opened with `fence` (only fence chars/spaces).
+fn md_fence_close(line: &str, fence: char) -> bool {
+    let count = line.chars().take_while(|&x| x == fence).count();
+    count >= 3 && line.chars().all(|x| x == fence || x == ' ' || x == '\t')
+}
+
+/// A thematic break: three or more `-`, `*`, or `_` (spaces allowed).
+fn md_hrule(line: &str) -> bool {
+    let t = line.trim();
+    let mut chars = t.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !matches!(first, '-' | '*' | '_') {
+        return false;
+    }
+    t.chars().filter(|&c| c != ' ' && c != '\t').count() >= 3
+        && t.chars().all(|c| c == first || c == ' ' || c == '\t')
+}
+
+/// Parse an ATX heading into its level and inline content. Closing hashes are
+/// stripped only when preceded by whitespace.
+fn md_heading(line: &str) -> Option<(usize, String)> {
+    let hashes = line.chars().take_while(|&c| c == '#').count();
+    if hashes == 0 || hashes > 6 {
+        return None;
+    }
+    let rest = &line[hashes..];
+    if !rest.starts_with(' ') && !rest.starts_with('\t') {
+        return None;
+    }
+    let mut content = rest.trim().to_string();
+    if content.ends_with('#') {
+        let stripped = content.trim_end_matches('#');
+        if stripped.ends_with([' ', '\t']) {
+            content = stripped.trim_end().to_string();
         }
     }
-    let mut result = parts.concat();
-    for (i, fragment) in blocks.iter().enumerate() {
-        result = result.replace(&format!("\u{0}{i}\u{0}"), fragment);
+    Some((hashes, content))
+}
+
+/// Whether a line starts a list item (unordered or ordered).
+fn md_list_item(line: &str) -> bool {
+    md_ul_content(line).is_some() || md_ol_content(line).is_some()
+}
+
+fn md_ul_content(line: &str) -> Option<&str> {
+    ['-', '*', '+'].iter().find_map(|&marker| {
+        line.strip_prefix(marker)
+            .filter(|r| r.starts_with(' ') || r.starts_with('\t'))
+    })
+}
+
+fn md_ol_content(line: &str) -> Option<&str> {
+    let digits = line.chars().take_while(|c| c.is_ascii_digit()).count();
+    if digits == 0 || digits > 9 {
+        return None;
     }
-    result
+    ['.', ')'].iter().find_map(|&sep| {
+        line[digits..]
+            .strip_prefix(sep)
+            .filter(|r| r.starts_with(' ') || r.starts_with('\t'))
+    })
+}
+
+/// Whether a line is a table separator (`|---|:--:|`, a single dash per cell is
+/// enough).
+fn md_table_sep(line: &str) -> bool {
+    line.contains('|')
+        && line.contains('-')
+        && line
+            .chars()
+            .all(|c| matches!(c, '|' | '-' | ':' | ' ' | '\t'))
+}
+
+/// Split a table row into trimmed cells (outer pipes ignored).
+fn md_table_cells(line: &str) -> Vec<String> {
+    line.trim()
+        .trim_matches('|')
+        .split('|')
+        .map(|cell| cell.trim().to_string())
+        .collect()
 }
 
 /// Strip HTML tags from a fragment, leaving text (no entity decoding) —
@@ -463,5 +617,60 @@ mod tests {
         // A single bold pass: inner `__`/`**` is not re-processed as bold.
         assert_eq!(md_to_html("**__a__**"), "<p><strong>__a__</strong></p>");
         assert_eq!(md_to_html("__a**b__"), "<p><strong>a**b</strong></p>");
+    }
+
+    #[test]
+    fn md_heading_then_list_without_blank_line() {
+        assert_eq!(
+            md_to_html("## Lists\n- a\n- b"),
+            "<h2>Lists</h2><ul><li>a</li><li>b</li></ul>"
+        );
+    }
+
+    #[test]
+    fn md_paragraph_then_heading_without_blank_line() {
+        assert_eq!(md_to_html("intro\n# Title"), "<p>intro</p><h1>Title</h1>");
+    }
+
+    #[test]
+    fn md_table() {
+        assert_eq!(
+            md_to_html("| a | b |\n|---|---|\n| 1 | 2 |"),
+            "<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>"
+        );
+    }
+
+    #[test]
+    fn md_table_after_paragraph() {
+        assert_eq!(
+            md_to_html("text\n\n| h |\n| - |\n| v |"),
+            "<p>text</p><table><thead><tr><th>h</th></tr></thead><tbody><tr><td>v</td></tr></tbody></table>"
+        );
+    }
+
+    #[test]
+    fn md_blockquote() {
+        assert_eq!(
+            md_to_html("> quoted\n> more"),
+            "<blockquote><p>quoted<br/>more</p></blockquote>"
+        );
+    }
+
+    #[test]
+    fn md_horizontal_rule() {
+        assert_eq!(md_to_html("a\n\n---\n\nb"), "<p>a</p><hr/><p>b</p>");
+    }
+
+    #[test]
+    fn md_tilde_fence() {
+        assert_eq!(
+            md_to_html("~~~\nif a < b\n~~~"),
+            "<pre><code>if a &lt; b</code></pre>"
+        );
+    }
+
+    #[test]
+    fn md_pipe_line_without_separator_is_paragraph() {
+        assert_eq!(md_to_html("| just | text |"), "<p>| just | text |</p>");
     }
 }

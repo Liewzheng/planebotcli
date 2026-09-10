@@ -13,8 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Credentials can now come from a config file discovered from several locations,
   highest priority first: `~/.config/pbot/config.toml` (TOML with top-level
   `base_url` / `api_key` / `workspace`, optionally under `[auth]`), `~/.pbot`,
-  `~/.planecli`, then the legacy `~/.plane_api`. `pbot configure` keeps writing
-  `~/.plane_api`; precedence stays CLI flags > env vars > config file.
+  `~/.planecli`, then the legacy `~/.plane_api`. `pbot configure` writes the active
+  config file (highest-priority existing candidate, `~/.plane_api` by default);
+  precedence stays CLI flags > env vars > config file.
 - Repository workflow conventions (`AGENTS.md`): every change is tracked by a
   work item, branched off `integration-main`, and landed through a pull request;
   `main`, `master`, and `dev` take no direct merges.

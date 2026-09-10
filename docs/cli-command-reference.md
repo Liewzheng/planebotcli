@@ -57,7 +57,7 @@ Configuration is discovered from several files, highest priority first: `~/.conf
 | Command | Purpose |
 |---|---|
 | [`whoami`](#pbot-whoami) | Show the authenticated user. |
-| [`configure`](#pbot-configure) | Write credentials interactively (to `~/.plane_api`). |
+| [`configure`](#pbot-configure) | Write credentials interactively (to the active config file). |
 | [`user`](#pbot-user) | Workspace members. |
 | [`cache`](#pbot-cache) | Manage the local disk cache. |
 | [`project`](#pbot-project) | Projects. |
@@ -84,7 +84,7 @@ pbot whoami [--json]
 
 ## pbot configure
 
-Write credentials interactively (prompts for base URL, API key, workspace slug), saving to `~/.plane_api`, then clear the disk cache.
+Write credentials interactively (prompts for base URL, API key, workspace slug), saving to the active config file (highest-priority existing candidate, `~/.plane_api` by default), then clear the disk cache.
 
 ```
 pbot configure

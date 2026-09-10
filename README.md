@@ -41,7 +41,8 @@ api_key=your-personal-access-token
 workspace=your-workspace-slug
 ```
 
-`pbot configure` writes `~/.plane_api` interactively (`chmod 600`); the TOML file
+`pbot configure` writes the active config file interactively (the highest-priority
+existing candidate, `~/.plane_api` by default, `chmod 600`); the TOML file
 takes the same keys at the top level or under `[auth]`. Exporting
 `PLANE_BASE_URL` / `PLANE_API_KEY` / `PLANE_WORKSPACE` also works. Precedence is
 **flags > environment variables > config file**, per setting. `base_url` is your instance

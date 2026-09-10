@@ -57,7 +57,7 @@ pbot [全局选项] <命令> [<子命令>] [<参数>...] [选项]
 | 命令 | 用途 |
 |---|---|
 | [`whoami`](#pbot-whoami) | 查看当前登录用户。 |
-| [`configure`](#pbot-configure) | 交互式写入凭证（到 `~/.plane_api`）。 |
+| [`configure`](#pbot-configure) | 交互式写入凭证（到生效的配置文件）。 |
 | [`user`](#pbot-user) | 工作区成员。 |
 | [`cache`](#pbot-cache) | 本地磁盘缓存管理。 |
 | [`project`](#pbot-project) | 项目。 |
@@ -84,7 +84,7 @@ pbot whoami [--json]
 
 ## pbot configure
 
-交互式写入凭证（依次提示实例地址、API Key、工作区 slug），保存到 `~/.plane_api`，随后清空磁盘缓存。
+交互式写入凭证（依次提示实例地址、API Key、工作区 slug），保存到生效的配置文件（优先级最高的已存在候选，默认 `~/.plane_api`），随后清空磁盘缓存。
 
 ```
 pbot configure

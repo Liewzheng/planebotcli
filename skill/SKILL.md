@@ -91,9 +91,6 @@ Priority: `urgent`, `high`, `medium`, `low`, `none` (or `1`–`4`, `0`).
 
 ### Attachments & inline images
 
-NOTE: these commands live in a pending upstream PR — on plain upstream main, `attachment` and
-`-i/--image` do not exist yet.
-
 ```bash
 pbot attachment ls -p "Project" ABC-123 --json
 pbot attachment attach -p "Project" ABC-123 -f ./log.txt --json   # prompts if the name exists; --force skips
@@ -184,32 +181,30 @@ pushed, PR opened or merged, release cut, decision made), post the progress comm
 fitting state on the corresponding Plane task immediately. Never batch Plane updates at the end of
 a session.
 
-**Comment format** (team standard — see the reference comment on PLANE-5; write the comment in
-the team's working language, Chinese, like the existing task comments):
+**Comment format** (team standard — write the comment in the team's working language,
+Chinese, like the existing task comments):
 
-- One-line conclusion first (`已提交上游：`, `已完成：`, `阻塞：...`).
+- One-line conclusion first (`已完成：`, `已合入：`, `阻塞：...`).
 - Key links one per line, as bare full URLs — pbot converts them to clickable anchors in
-  the comment (the raw API stores them as plain text, it does not auto-link). NOTE: this
-  linkify lives in a pending upstream PR — on plain upstream main, posted URLs stay plain text
-  and only comments made through the web UI get links. Markdown link syntax is unnecessary:
+  the comment (the raw API stores them as plain text, it does not auto-link). Markdown link
+  syntax is unnecessary:
   ```
-  Issue https://github.com/OWNER/REPO/issues/N
-  PR https://github.com/OWNER/REPO/pull/N
+  PR https://github.com/Liewzheng/planebot/pull/N
+  任务 http://100.64.0.8/isletspace/projects/<project-uuid>/issues/<item-uuid>/
   ```
 - Close with a parenthetical of technical context: branch name in backticks (rendered as a code
   tag by pbot — the editor stores HTML and does not parse markdown, so the CLI converts
   `code` and fenced blocks itself), what the branch
-  contains, and its sync state (`已 rebase 到最新 main`).
+  contains, and where it landed (`已合入 integration/selfhost`).
 - No `-` bullet lists, no restating what the links say, no filler. Multi-line bodies: write to a
   temp file and pass `--body "$(cat file)"`.
 
 Full example:
 
 ```
-已提交上游：
-Issue https://github.com/makeplane/plane/issues/9750
-PR https://github.com/makeplane/plane/pull/9751
-（分支 `fix/headlessui-popper-positioning`，仅含两个 headlessui patch 提交，已 rebase 到最新 preview）
+已完成：
+PR https://github.com/Liewzheng/planebot/pull/N
+（分支 `fix/table-perf`，表格插件的 O(表格数×文档) 修复 + 回归测试，已合入 integration/selfhost）
 ```
 
 **Separate items with a blank line.** The comment body is plain text: a blank line starts a new
@@ -217,14 +212,10 @@ paragraph, a single newline only becomes a br tag. `1) ...\n2) ...` on adjacent 
 joined on the web UI — put an empty line between list items (write the body to a file with real
 blank lines, not a one-liner with `\n` escapes).
 
-**Record upstream research in the task's comments.** Before opening an upstream issue or PR —
-or when checking whether a fix/feature already exists upstream — survey the target repo with
-`gh issue list --repo OWNER/REPO --search "..." --state all` and `gh pr list ...` first, then
-post the findings as a comment on the task, in the standard format: one-line conclusion
-(`调研结果：无重复，可提交` / `已有 PR #N 覆盖，无需重复提交` / `部分相关：...`), the relevant
-links one per line as bare URLs, and a closing parenthetical with the search terms used and what
-gap remains. The调研 trail must be visible to the human and to the next AI that picks up the
-task — never let the survey live only in your own session.
+**No upstream submission.** pbot / planebot are an independent distribution: fixes land on the
+`integration/selfhost` line and are never opened as issues or pull requests against Plane upstream
+or any other repository. There is no upstream-survey step and no `已提交上游：` comment to write —
+a task that records a finished fix names the local branch and the merge that carried it.
 
 **Every task gets a label — you pick it.** Creating a work item without a label is incomplete.
 Choose the appropriate tag yourself and pass `--labels` on `wi create`: `feat` for features,
@@ -268,8 +259,9 @@ the work is done and awaiting merge) in the same breath as `comment create`. Nev
 you just updated in Todo/Backlog.
 
 **Only the human closes a task.** Never set Done yourself. A task is complete only when the
-human says so, or when the linked branch/PR is merged upstream. "I finished my part and pushed"
-tops out at In Progress — the same applies when correcting a state you set too eagerly.
+human says so, or when the work is merged onto the `integration/selfhost` line. "I finished my
+part and pushed" tops out at In Progress — the same applies when correcting a state you set too
+eagerly.
 
 ## Gotchas
 
@@ -290,12 +282,9 @@ tops out at In Progress — the same applies when correcting a state you set too
   `/{workspace}/projects/{project-uuid}/issues/{issue-uuid}/` — identifier-based URLs
   (`.../projects/PLANECLI/issues/PLANECLI-3/`) render "not found". Get both UUIDs from
   `wi ls --json` (project + id) when building links or driving the UI.
-- **`*_name` fields from `wi show` hold UUIDs on upstream main.** `assignee_names`,
-  `label_names`, `label_detail_names`, and `state_detail_name` are raw UUIDs there — build
-  lookup maps with `label ls`, `state ls`, `users ls`, or read `priority` and `name` from
-  `wi ls`, which are human-readable. NOTE: the fix (resolving these via cached maps, same as
-  `wi ls`) is in a pending upstream PR — on builds that include it, `wi show` returns real
-  names and this workaround is unnecessary.
+- **`*_name` fields from `wi show` are human-readable.** `assignee_names`, `label_names`,
+  `label_detail_names`, and `state_detail_name` are resolved through the cached maps (the same
+  ones `wi ls` uses), so they carry real names rather than raw UUIDs.
 - **`sequence_id` shape differs.** `wi show` / `wi create` return an integer (`204`); `wi ls`
   returns the full identifier as a string (`"PIPERAG-204"`). Build identifiers as
   `sequence_id` from `wi ls`, or `"{project_identifier}-{sequence_id}"` from `wi show`.

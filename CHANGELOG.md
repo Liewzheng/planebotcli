@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - The maintainer merges pull requests; the agent that opened one no longer does.
+- The CLI is documented as an independent distribution: changes land on the
+  `integration/selfhost` line and are never opened as issues or pull requests against
+  Plane upstream. The skill's comment format and gotchas describe this build rather than
+  an upstream one.
 - Release notes accumulate under `## [Unreleased]` as changes land. A release
   renames that section to `## [<version>] - YYYY-MM-DD`, instead of reconstructing
   the entries at release time.

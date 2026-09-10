@@ -155,7 +155,10 @@ impl PlaneClient {
                     });
                 }
                 return serde_json::from_str(&text).map_err(|e| PlaneError::Api {
-                    message: format!("invalid JSON from {path}: {e}"),
+                    message: format!(
+                        "invalid JSON from {path} (HTTP {status}): {e}; body starts: {}",
+                        text.chars().take(160).collect::<String>()
+                    ),
                 });
             }
             let retryable =
@@ -481,12 +484,46 @@ impl PlaneClient {
         Ok(())
     }
 
-    /// `GET /api/v1/workspaces/{ws}/work-items/search/?query=...`
-    pub async fn search_work_items(&self, query: &str) -> Result<Vec<WorkItem>, PlaneError> {
+    /// `GET /api/v1/workspaces/{ws}/work-items/search/?search=...`
+    ///
+    /// The endpoint returns an `{"issues": [...]}` envelope on Plane 1.4+ and a
+    /// bare array on older builds; both are accepted. `project_id` narrows the
+    /// search to one project (`workspace_search=false`), otherwise the whole
+    /// workspace is searched.
+    pub async fn search_work_items(
+        &self,
+        query: &str,
+        project_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<WorkItem>, PlaneError> {
         let path = format!("/api/v1/workspaces/{}/work-items/search/", self.workspace);
-        let q = [("query", query.to_string())];
-        self.request_json(reqwest::Method::GET, &path, &q, None)
-            .await
+        let mut q: Vec<(&str, String)> = vec![
+            ("search", query.to_string()),
+            ("limit", limit.to_string()),
+        ];
+        if let Some(pid) = project_id {
+            q.push(("workspace_search", "false".to_string()));
+            q.push(("project_id", pid.to_string()));
+        }
+        let raw: serde_json::Value = self.request_value(reqwest::Method::GET, &path, &q, None).await?;
+        let items = match raw {
+            serde_json::Value::Array(a) => a,
+            serde_json::Value::Object(m) => m
+                .get("issues")
+                .and_then(|v| v.as_array())
+                .cloned()
+                .unwrap_or_default(),
+            _ => {
+                return Err(PlaneError::Api {
+                    message: format!(
+                        "unexpected shape from {path}: expected an array or an 'issues' object"
+                    ),
+                })
+            }
+        };
+        serde_json::from_value(serde_json::Value::Array(items)).map_err(|e| PlaneError::Api {
+            message: format!("invalid JSON from {path}: {e}"),
+        })
     }
 
     /// `PATCH .../work-items/{id}/` with `{"parent": <uuid>}` to set the parent
@@ -1591,6 +1628,84 @@ mod http_tests {
             .await
             .unwrap();
         assert!(created["blocking"].is_array());
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_work_items_parses_issues_envelope() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "search".to_string(),
+                "webhook".to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"issues":[{"name":"Webhook 评审路径","id":"i1","sequence_id":34,"project__identifier":"RENG","project_id":"p1","workspace__slug":"ws"}]}"#,
+            )
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let items = client.search_work_items("webhook", None, 20).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].project_identifier.as_deref(), Some("RENG"));
+        assert!(items[0].project_detail.is_none());
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_work_items_accepts_bare_array() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "search".to_string(),
+                "x".to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[{"name":"Old","id":"i1","sequence_id":1}]"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let items = client.search_work_items("x", None, 20).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name.as_deref(), Some("Old"));
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_work_items_sends_project_scope_params() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded(
+                    "search".to_string(),
+                    "webhook".to_string(),
+                ),
+                mockito::Matcher::UrlEncoded(
+                    "workspace_search".to_string(),
+                    "false".to_string(),
+                ),
+                mockito::Matcher::UrlEncoded(
+                    "project_id".to_string(),
+                    "p1".to_string(),
+                ),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"issues":[]}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let items = client
+            .search_work_items("webhook", Some("p1"), 20)
+            .await
+            .unwrap();
+        assert!(items.is_empty());
         m.assert_async().await;
     }
 }

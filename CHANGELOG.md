@@ -26,6 +26,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - `--labels` now matches strictly: a missing label errors with the available list
   instead of silently applying the closest one (e.g. `release-0.10.9` → `release-0.10.6`).
   States keep exact-name priority with a fuzzy fall-back.
+- `wi search` failed against Plane 1.4+ because the search endpoint returns an
+  `{"issues": [...]}` envelope (older builds return a bare array) and the CLI sent
+  the wrong `query` parameter, which the server ignores (empty results). It now
+  sends `search` / `limit`, unpacks both response shapes, supports `-p <project>`
+  (mapped to `project_id` + `workspace_search=false`), and derives the displayed
+  identifier from the search payload's `project__identifier` field.
+- API error messages for undecodable responses now include the HTTP status code
+  and the start of the response body, so a shape mismatch is distinguishable from
+  an HTTP failure.
 - Repository workflow conventions (`AGENTS.md`): every change is tracked by a
   work item, branched off `integration-main`, and landed through a pull request;
   `main`, `master`, and `dev` take no direct merges.

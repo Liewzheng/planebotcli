@@ -3460,7 +3460,7 @@ async fn cmd_wi_search(
     client: &PlaneClient,
     base_url: &str,
     query: &str,
-    _project: Option<&str>,
+    project: Option<&str>,
     limit: usize,
     json: bool,
 ) -> Result<(), PlaneError> {
@@ -3473,7 +3473,11 @@ async fn cmd_wi_search(
             (m.id, name)
         })
         .collect();
-    let items = client.search_work_items(query).await?;
+    let project_id = match project {
+        Some(p) => Some(resolve_project(p, client).await?.id),
+        None => None,
+    };
+    let items = client.search_work_items(query, project_id.as_deref(), limit).await?;
     let lookups = Lookups {
         state_map: HashMap::new(),
         label_map: HashMap::new(),
@@ -3481,12 +3485,15 @@ async fn cmd_wi_search(
     };
     let views: Vec<Value> = items
         .iter()
-        .take(limit)
         .map(|item| {
             let identifier = item
-                .project_detail
-                .as_ref()
-                .and_then(|d| d.identifier.clone())
+                .project_identifier
+                .clone()
+                .or_else(|| {
+                    item.project_detail
+                        .as_ref()
+                        .and_then(|d| d.identifier.clone())
+                })
                 .unwrap_or_default();
             work_item_view(item, &identifier, &lookups, base_url, &workspace)
         })

@@ -189,8 +189,8 @@ Chinese, like the existing task comments):
   the comment (the raw API stores them as plain text, it does not auto-link). Markdown link
   syntax is unnecessary:
   ```
-  PR https://github.com/Liewzheng/planebot/pull/N
-  任务 http://100.64.0.8/isletspace/projects/<project-uuid>/issues/<item-uuid>/
+  PR https://github.com/<owner>/<repo>/pull/N
+  任务 http://HOST/<workspace-slug>/projects/<project-uuid>/issues/<item-uuid>/
   ```
 - Close with a parenthetical of technical context: branch name in backticks (rendered as a code
   tag by pbot — the editor stores HTML and does not parse markdown, so the CLI converts

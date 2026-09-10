@@ -263,7 +263,12 @@ pub fn md_to_html(md: &str) -> String {
             }
             let joined = code.join("\n");
             let escaped = html_escape::encode_quoted_attribute(joined.trim_matches('\n'));
-            out.push_str(&format!("<pre><code>{escaped}</code></pre>"));
+            // Keep the info string's language so the editor records it (the
+            // web code block reads `language-*` from the class attribute).
+            let class = md_fence_language(trimmed, fence)
+                .map(|lang| format!(" class=\"language-{lang}\""))
+                .unwrap_or_default();
+            out.push_str(&format!("<pre><code{class}>{escaped}</code></pre>"));
             continue;
         }
         // Horizontal rule.
@@ -366,6 +371,19 @@ fn md_fence(line: &str) -> Option<char> {
 fn md_fence_close(line: &str, fence: char) -> bool {
     let count = line.chars().take_while(|&x| x == fence).count();
     count >= 3 && line.chars().all(|x| x == fence || x == ' ' || x == '\t')
+}
+
+/// Language from a fence's info string — the first whitespace-separated token,
+/// sanitized to a safe identifier. `None` when the fence has no info string.
+fn md_fence_language(line: &str, fence: char) -> Option<String> {
+    let info = line.trim_start_matches(fence).trim();
+    let lang: String = info
+        .split_whitespace()
+        .next()?
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '_'))
+        .collect();
+    (!lang.is_empty()).then_some(lang)
 }
 
 /// A thematic break: three or more `-`, `*`, or `_` (spaces allowed).
@@ -575,7 +593,23 @@ mod tests {
     fn md_fenced_block_becomes_pre_code() {
         assert_eq!(
             md_to_html("before\n\n```py\nprint('<x>')\n```\n\nafter"),
-            "<p>before</p><pre><code>print(&#x27;&lt;x&gt;&#x27;)</code></pre><p>after</p>"
+            "<p>before</p><pre><code class=\"language-py\">print(&#x27;&lt;x&gt;&#x27;)</code></pre><p>after</p>"
+        );
+    }
+
+    #[test]
+    fn md_fence_without_language_has_no_class() {
+        assert_eq!(
+            md_to_html("```\nplain\n```"),
+            "<pre><code>plain</code></pre>"
+        );
+    }
+
+    #[test]
+    fn md_fence_language_keeps_first_info_token() {
+        assert_eq!(
+            md_to_html("```bash title=\"x.sh\"\necho hi\n```"),
+            "<pre><code class=\"language-bash\">echo hi</code></pre>"
         );
     }
 

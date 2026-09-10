@@ -79,6 +79,49 @@ fn estimate_display(value: &Option<Value>) -> String {
     }
 }
 
+/// `PROJ-123` composed from a raw `sequence_id` value (`Number` or `String`)
+/// and the project identifier; empty when either half is missing.
+pub fn compose_sequence_id(sequence_id: Option<&Value>, project_identifier: &str) -> String {
+    let seq = sequence_id
+        .map(|v| match v {
+            Value::Number(n) => n.to_string(),
+            Value::String(s) => s.clone(),
+            _ => String::new(),
+        })
+        .unwrap_or_default();
+    if project_identifier.is_empty() || seq.is_empty() {
+        String::new()
+    } else {
+        format!("{project_identifier}-{seq}")
+    }
+}
+
+/// The `sub_issues` entries of a work item view: the project's work items
+/// whose `parent` is `parent_id`, each as `{id, sequence_id, name,
+/// state_detail_name}`.
+pub fn sub_issue_summaries(
+    items: &[WorkItem],
+    parent_id: &str,
+    project_identifier: &str,
+    lookups: &Lookups,
+) -> Vec<Value> {
+    items
+        .iter()
+        .filter(|item| item.parent.as_deref() == Some(parent_id))
+        .map(|item| {
+            json!({
+                "id": item.id,
+                "sequence_id": compose_sequence_id(
+                    item.sequence_id.as_ref(),
+                    project_identifier,
+                ),
+                "name": item.name.clone().unwrap_or_default(),
+                "state_detail_name": name_or_lookup(&item.state, &lookups.state_map, false),
+            })
+        })
+        .collect()
+}
+
 /// Build the JSON view of a work item, matching the Python enriched row.
 pub fn work_item_view(
     item: &WorkItem,
@@ -95,21 +138,7 @@ pub fn work_item_view(
             .and_then(|d| d.identifier.clone())
             .unwrap_or_default()
     };
-    let seq = item
-        .sequence_id
-        .as_ref()
-        .map(|v| match v {
-            Value::Number(n) => n.to_string(),
-            Value::String(s) => s.clone(),
-            _ => String::new(),
-        })
-        .unwrap_or_default();
-    let sequence_id = if identifier.is_empty() || seq.is_empty() {
-        String::new()
-    } else {
-        format!("{identifier}-{seq}")
-    };
-
+    let sequence_id = compose_sequence_id(item.sequence_id.as_ref(), &identifier);
     let priority = match item.priority.as_deref() {
         Some(p) if !p.is_empty() && p != "none" => p.to_string(),
         _ => String::new(),
@@ -408,5 +437,55 @@ mod tests {
         assert_eq!(view["type"], "");
         assert_eq!(view["size"], Value::Null);
         assert_eq!(view["is_uploaded"], false);
+    }
+
+    #[test]
+    fn sequence_id_composes_number_and_string_forms() {
+        assert_eq!(
+            compose_sequence_id(Some(&Value::from(30)), "PLANECLI"),
+            "PLANECLI-30"
+        );
+        assert_eq!(
+            compose_sequence_id(Some(&Value::String("30".into())), "PLANECLI"),
+            "PLANECLI-30"
+        );
+        // Either half missing yields nothing rather than a partial label.
+        assert_eq!(compose_sequence_id(Some(&Value::from(30)), ""), "");
+        assert_eq!(compose_sequence_id(None, "PLANECLI"), "");
+    }
+
+    #[test]
+    fn sub_issue_summaries_select_only_children() {
+        let mut lookups = Lookups::default();
+        lookups.state_map.insert("s1".into(), "In Progress".into());
+        let items = vec![
+            WorkItem {
+                id: "child-1".into(),
+                name: Some("Child".into()),
+                sequence_id: Some(Value::from(7)),
+                parent: Some("parent-1".into()),
+                state: Some(Value::String("s1".into())),
+                ..Default::default()
+            },
+            WorkItem {
+                id: "other".into(),
+                name: Some("Unrelated".into()),
+                parent: Some("parent-2".into()),
+                ..Default::default()
+            },
+            WorkItem {
+                id: "top".into(),
+                name: Some("Top level".into()),
+                ..Default::default()
+            },
+        ];
+        let summaries = sub_issue_summaries(&items, "parent-1", "PLANECLI", &lookups);
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0]["id"], "child-1");
+        assert_eq!(summaries[0]["sequence_id"], "PLANECLI-7");
+        assert_eq!(summaries[0]["name"], "Child");
+        assert_eq!(summaries[0]["state_detail_name"], "In Progress");
+        // No children → empty array, never null.
+        assert!(sub_issue_summaries(&items, "nobody", "PLANECLI", &lookups).is_empty());
     }
 }

@@ -168,6 +168,19 @@ impl PlaneClient {
         }
     }
 
+    /// Raw JSON request that serializes `body` verbatim — unlike [`body_json`],
+    /// it does not strip `null` fields, so a PATCH can carry an explicit
+    /// `{"parent": null}` instead of collapsing to an empty (ignored) body.
+    async fn request_value(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<&serde_json::Value>,
+    ) -> Result<serde_json::Value, PlaneError> {
+        self.request_json(method, path, query, body).await
+    }
+
     /// Follow cursor pagination until exhausted, collecting all results.
     async fn paginate<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, PlaneError> {
         let mut all = Vec::new();
@@ -473,6 +486,65 @@ impl PlaneClient {
         let path = format!("/api/v1/workspaces/{}/work-items/search/", self.workspace);
         let q = [("query", query.to_string())];
         self.request_json(reqwest::Method::GET, &path, &q, None)
+            .await
+    }
+
+    /// `PATCH .../work-items/{id}/` with `{"parent": <uuid>}` to set the parent
+    /// or an explicit `{"parent": null}` to clear it.
+    ///
+    /// The body is built here rather than through `body_json`: that helper
+    /// drops nulls, which would turn a clear request into an empty PATCH the
+    /// API accepts and ignores (ADR-0007).
+    pub async fn set_work_item_parent(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+        parent: Option<&str>,
+    ) -> Result<(), PlaneError> {
+        let path = format!(
+            "/api/v1/workspaces/{}/projects/{}/work-items/{}",
+            self.workspace, project_id, work_item_id
+        );
+        let body = serde_json::json!({ "parent": parent });
+        let _: serde_json::Value = self
+            .request_value(reqwest::Method::PATCH, &path, &[], Some(&body))
+            .await?;
+        self.invalidate(&format!("work_items:{}:{}", self.workspace, project_id));
+        Ok(())
+    }
+
+    /// `GET .../work-items/{id}/relations/` — the raw relation buckets
+    /// (`blocking`, `blocked_by`, `duplicate`, `relates_to`, `start_after`,
+    /// `start_before`, `finish_after`, `finish_before`), each a list of
+    /// `{project_id, issue_id}`. Returned raw so the CLI can flatten it.
+    pub async fn list_relations(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+    ) -> Result<serde_json::Value, PlaneError> {
+        let path = relations_path(&self.workspace, project_id, work_item_id);
+        self.request_value(reqwest::Method::GET, &path, &[], None)
+            .await
+    }
+
+    /// `POST .../work-items/{id}/relations/` — body
+    /// `{"relation_type": T, "issues": [<uuid>, ...]}`.
+    ///
+    /// The API only creates relations; there is no endpoint to remove one, so
+    /// no delete method exists here.
+    pub async fn create_relations(
+        &self,
+        project_id: &str,
+        work_item_id: &str,
+        relation_type: &str,
+        issues: &[String],
+    ) -> Result<serde_json::Value, PlaneError> {
+        let path = relations_path(&self.workspace, project_id, work_item_id);
+        let body = serde_json::json!({
+            "relation_type": relation_type,
+            "issues": issues,
+        });
+        self.request_value(reqwest::Method::POST, &path, &[], Some(&body))
             .await
     }
 
@@ -1158,6 +1230,13 @@ fn attachments_path(workspace: &str, project_id: &str, work_item_id: &str) -> St
     )
 }
 
+/// URL path for a work item's relations collection (ends with `/`).
+fn relations_path(workspace: &str, project_id: &str, work_item_id: &str) -> String {
+    format!(
+        "/api/v1/workspaces/{workspace}/projects/{project_id}/work-items/{work_item_id}/relations/"
+    )
+}
+
 /// Cache key for one work item's attachment list.
 fn attachment_cache_key(workspace: &str, project_id: &str, work_item_id: &str) -> String {
     format!("attachments:{workspace}:{project_id}:{work_item_id}")
@@ -1421,6 +1500,97 @@ mod http_tests {
         let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
         let err = client.get_work_item("p1", "wi1").await.unwrap_err();
         assert_eq!(err.exit_code(), planebotcli_core::errors::EXIT_NOT_FOUND);
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn set_parent_sends_the_uuid() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("PATCH", "/api/v1/workspaces/ws/projects/p1/work-items/wi1")
+            .match_body(mockito::Matcher::Json(serde_json::json!({"parent": "wi2"})))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"id":"wi1","parent":"wi2"}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        client
+            .set_work_item_parent("p1", "wi1", Some("wi2"))
+            .await
+            .unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn clear_parent_sends_an_explicit_null() {
+        let mut server = mockito::Server::new_async().await;
+        // The matcher demands the literal `"parent": null` — a null-stripped
+        // `{}` body must NOT satisfy it.
+        let m = server
+            .mock("PATCH", "/api/v1/workspaces/ws/projects/p1/work-items/wi1")
+            .match_body(mockito::Matcher::Json(serde_json::json!({"parent": null})))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"id":"wi1","parent":null}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        client
+            .set_work_item_parent("p1", "wi1", None)
+            .await
+            .unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn list_relations_returns_raw_buckets() {
+        let mut server = mockito::Server::new_async().await;
+        let body = r#"{"blocking":[{"project_id":"p1","issue_id":"wi2"}],"blocked_by":[],"duplicate":[],"relates_to":[],"start_after":[],"start_before":[],"finish_after":[],"finish_before":[]}"#;
+        let m = server
+            .mock(
+                "GET",
+                "/api/v1/workspaces/ws/projects/p1/work-items/wi1/relations/",
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(body)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let relations = client.list_relations("p1", "wi1").await.unwrap();
+        assert_eq!(relations["blocking"][0]["issue_id"], "wi2");
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn create_relations_posts_the_type_and_issue_uuids() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock(
+                "POST",
+                "/api/v1/workspaces/ws/projects/p1/work-items/wi1/relations/",
+            )
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "relation_type": "blocking",
+                "issues": ["wi2", "wi3"],
+            })))
+            .with_status(201)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"blocking":[{"project_id":"p1","issue_id":"wi2"}]}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let created = client
+            .create_relations(
+                "p1",
+                "wi1",
+                "blocking",
+                &["wi2".to_string(), "wi3".to_string()],
+            )
+            .await
+            .unwrap();
+        assert!(created["blocking"].is_array());
         m.assert_async().await;
     }
 }

@@ -35,7 +35,7 @@ The contract:
 - `--verbose` / `-v` — raises log verbosity (logs also go to stderr, keeping stdout clean).
 - `--no-cache` — bypasses cache reads for the invocation (see [ADR-0004](0004-disk-cache-ttls-and-keys.md)).
 
-Errors follow the same discipline: `pbotcliError` is caught in `main()` and printed to stderr with a hint, and the process exits with the error's `exit_code` (Auth=2, NotFound=3, API=4, Validation=5).
+Errors follow the same discipline: `PbotcliError` is caught in `main()` and printed to stderr with a hint, and the process exits with the error's `exit_code` (Auth=2, NotFound=3, API=4, Validation=5).
 
 ### Pros and Cons of the Options
 

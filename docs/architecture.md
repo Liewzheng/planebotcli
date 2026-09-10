@@ -28,19 +28,19 @@ record before reporting success — see [ADR-0007](adr/0007-verify-writes-the-ap
 
 ## Components
 
-**`app.py`** — the root cyclopts `App`. Registers every sub-app (`project_app`, `wi_app`, …) and defines `main()`, the entry point. `main()` strips the global `--verbose`/`-v` and `--no-cache` flags from `sys.argv` *before* cyclopts parses (cyclopts does not own these), configures logging and the cache, runs the app, and translates any `pbotcliError` into a formatted message plus exit code.
+**`app.py`** — the root cyclopts `App`. Registers every sub-app (`project_app`, `wi_app`, …) and defines `main()`, the entry point. `main()` strips the global `--verbose`/`-v` and `--no-cache` flags from `sys.argv` *before* cyclopts parses (cyclopts does not own these), configures logging and the cache, runs the app, and translates any `PbotcliError` into a formatted message plus exit code.
 
 **`commands/`** — one module per resource, each exposing a `cyclopts.App` with `list`/`show`/`create`/`update`/`delete` subcommands. This is where new features are added.
 
 **`utils/resolve.py`** — the resolution layer. Each resource has a `resolve_<x>` / `resolve_<x>_async` pair that tries **UUID → identifier → fuzzy name** in that order. Commands call the `_async` versions, which read through the cache.
 
-**`api/`** — `client.py` holds the `PbotClient` singleton (`get_client`) plus `get_config`/`get_workspace`; `async_sdk.py` wraps the blocking SDK.
+**`api/`** — `client.py` holds the `PlaneClient` singleton (`get_client`) plus `get_config`/`get_workspace`; `async_sdk.py` wraps the blocking SDK.
 
 **`cache.py`** — the disk cache (cashews). One `cached_list_<x>` per resource, returning plain dicts. TTLs vary by volatility.
 
 **`formatters/`** — `output()` (lists) and `output_single()` (records).
 
-**`exceptions.py`** — `pbotcliError` subclasses carrying `message`, `hint`, and `exit_code` (Auth=2, NotFound=3, API=4, Validation=5).
+**`exceptions.py`** — `PbotcliError` subclasses carrying `message`, `hint`, and `exit_code` (Auth=2, NotFound=3, API=4, Validation=5).
 
 **`utils/fuzzy.py`** — rapidfuzz `token_sort_ratio` matching with a default threshold of 60.
 

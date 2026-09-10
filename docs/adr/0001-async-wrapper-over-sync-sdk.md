@@ -29,7 +29,7 @@ The wrapper lives in `api/async_sdk.py`:
 - `run_sdk(fn, *args, **kwargs)` runs a blocking SDK call in a thread pool (`asyncio.to_thread`), gated by a module-level `asyncio.Semaphore(4)` so at most 4 requests are in flight at once.
 - It is decorated with tenacity `@retry`: retry when the exception is an `HttpError` with status `429` or `502/503/504`, `wait_random_exponential(min=1, max=60)`, `stop_after_attempt(5)`, `reraise=True`. Non-transient errors propagate immediately.
 - `paginate_all_async(list_fn, ...)` runs an entire cursor-paginated fetch inside one `run_sdk` call.
-- `create_client()` returns a **fresh** `PbotClient` for concurrent batches, so threads never share the singleton's `requests.Session` (which is not thread-safe).
+- `create_client()` returns a **fresh** `PlaneClient` for concurrent batches, so threads never share the singleton's `requests.Session` (which is not thread-safe).
 
 Commands therefore never call the SDK directly — they `await run_sdk(...)` / `await paginate_all_async(...)`.
 

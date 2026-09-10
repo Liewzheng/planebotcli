@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use planebotcli_cache::Cache;
-use planebotcli_client::{PageScope, PbotClient};
+use planebotcli_client::{PageScope, PlaneClient};
 use planebotcli_core::{PlaneError, config_file_path, load_config, save_config};
 use planebotcli_format::{output_json, output_table};
 use planebotcli_resolve::{
@@ -938,7 +938,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
     }
 
     let cfg = load_config()?;
-    let client = PbotClient::with_cache(&cfg, cli.no_cache)?;
+    let client = PlaneClient::with_cache(&cfg, cli.no_cache)?;
 
     match cli.command {
         Command::Configure => unreachable!("configure is handled before config load"),
@@ -1538,7 +1538,7 @@ fn configure_prompt(prompt: &str) -> String {
     line.trim().to_string()
 }
 
-async fn cmd_whoami(client: &PbotClient, json: bool) -> Result<(), PlaneError> {
+async fn cmd_whoami(client: &PlaneClient, json: bool) -> Result<(), PlaneError> {
     let me = client.get_me().await?;
     if json {
         output_json(&me);
@@ -1565,7 +1565,7 @@ async fn cmd_whoami(client: &PbotClient, json: bool) -> Result<(), PlaneError> {
 }
 
 async fn cmd_project_list(
-    client: &PbotClient,
+    client: &PlaneClient,
     cfg: &planebotcli_core::Config,
     no_cache: bool,
     json: bool,
@@ -1635,7 +1635,7 @@ fn output_project_view(project: &Project, json: bool) {
 }
 
 async fn cmd_project_show(
-    client: &PbotClient,
+    client: &PlaneClient,
     project: &str,
     json: bool,
 ) -> Result<(), PlaneError> {
@@ -1645,7 +1645,7 @@ async fn cmd_project_show(
 }
 
 async fn cmd_project_create(
-    client: &PbotClient,
+    client: &PlaneClient,
     name: &str,
     identifier: Option<&str>,
     description: Option<&str>,
@@ -1666,7 +1666,7 @@ async fn cmd_project_create(
 }
 
 async fn cmd_project_update(
-    client: &PbotClient,
+    client: &PlaneClient,
     project: &str,
     name: Option<&str>,
     identifier: Option<&str>,
@@ -1689,7 +1689,7 @@ async fn cmd_project_update(
     Ok(())
 }
 
-async fn cmd_project_delete(client: &PbotClient, project: &str) -> Result<(), PlaneError> {
+async fn cmd_project_delete(client: &PlaneClient, project: &str) -> Result<(), PlaneError> {
     let resolved = resolve_project(project, client).await?;
     let name = resolved.name.clone().unwrap_or_else(|| resolved.id.clone());
     client.delete_project(&resolved.id).await?;
@@ -1716,7 +1716,7 @@ struct WiListOptions<'a> {
 }
 
 async fn cmd_wi_list(
-    client: &PbotClient,
+    client: &PlaneClient,
     base_url: &str,
     opts: &WiListOptions<'_>,
     json: bool,
@@ -1876,7 +1876,7 @@ async fn cmd_wi_list(
 }
 
 async fn cmd_wi_show(
-    client: &PbotClient,
+    client: &PlaneClient,
     base_url: &str,
     issue: &str,
     project: Option<&str>,
@@ -2246,7 +2246,7 @@ fn normalize_priority(raw: Option<&str>) -> Result<Option<String>, PlaneError> {
 /// mirroring the Python write-before validation: a missing name fails with the
 /// available list instead of a bare not-found error.
 async fn resolve_state_label_ids(
-    client: &PbotClient,
+    client: &PlaneClient,
     project_id: &str,
     state: Option<&str>,
     labels: Option<&str>,
@@ -2327,7 +2327,7 @@ async fn resolve_state_label_ids(
 }
 
 async fn cmd_wi_create(
-    client: &PbotClient,
+    client: &PlaneClient,
     base_url: &str,
     title: &str,
     opts: &CreateOpts<'_>,
@@ -2420,7 +2420,7 @@ async fn cmd_wi_create(
 }
 
 async fn cmd_wi_update(
-    client: &PbotClient,
+    client: &PlaneClient,
     base_url: &str,
     issue: &str,
     opts: &UpdateOpts<'_>,
@@ -2528,14 +2528,14 @@ async fn cmd_wi_update(
 }
 
 /// Resolve `--parent`/`--clear-parent` into the value
-/// [`PbotClient::set_work_item_parent`] needs: `None` when neither flag was
+/// [`PlaneClient::set_work_item_parent`] needs: `None` when neither flag was
 /// given, `Some(None)` to clear, `Some(Some(uuid))` to set.
 ///
 /// Every rejection is a `PlaneError::Validation` (exit 5) raised before the
 /// write: mutual exclusion, a cross-project reference, the issue as its own
 /// parent, and an unresolvable reference.
 async fn resolve_parent_action(
-    client: &PbotClient,
+    client: &PlaneClient,
     located: &planebotcli_resolve::LocatedWorkItem,
     opts: &UpdateOpts<'_>,
 ) -> Result<Option<Option<String>>, PlaneError> {
@@ -2627,7 +2627,7 @@ fn validate_resolved_parent(
 
 /// Enrich and print a freshly written work item (maps fetched for names).
 async fn output_work_item_view(
-    client: &PbotClient,
+    client: &PlaneClient,
     base_url: &str,
     item: &planebotcli_types::WorkItem,
     project_identifier: &str,
@@ -2693,7 +2693,7 @@ async fn output_work_item_view(
 
 /// Locate a work item reference, project-scoped when `-p` is given.
 async fn locate_issue(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue: &str,
     project: Option<&str>,
 ) -> Result<planebotcli_resolve::LocatedWorkItem, PlaneError> {
@@ -2711,7 +2711,7 @@ async fn locate_issue(
 }
 
 async fn cmd_comment_list(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue: &str,
     project: Option<&str>,
     limit: usize,
@@ -2761,7 +2761,7 @@ async fn cmd_comment_list(
 /// `body` is the raw user text; `markdown` selects `md_to_html` over
 /// `body_to_html`.
 async fn cmd_comment_write(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue: &str,
     project: Option<&str>,
     comment_id: Option<&str>,
@@ -2814,7 +2814,7 @@ async fn cmd_comment_write(
 }
 
 async fn cmd_comment_delete(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue: &str,
     project: Option<&str>,
     comment_id: &str,
@@ -2922,7 +2922,7 @@ fn short_uuid(id: &str) -> String {
 /// every project the buckets mention (cached; the issue's own project is known
 /// up front and needs no extra project lookup).
 async fn relation_issue_labels(
-    client: &PbotClient,
+    client: &PlaneClient,
     rows: &[(String, String, String)],
     own_project_id: &str,
     own_identifier: &str,
@@ -2957,7 +2957,7 @@ async fn relation_issue_labels(
 /// `relations ls` — list a work item's relations. `--json` prints the raw
 /// relation buckets; the table flattens them into one row per related issue.
 async fn cmd_relations_list(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue: &str,
     project: Option<&str>,
     json: bool,
@@ -3003,7 +3003,7 @@ async fn cmd_relations_list(
 /// target. Targets are resolved inside the issue's project and validated
 /// before the write.
 async fn cmd_relations_add(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue: &str,
     opts: &RelationAddOpts<'_>,
     json: bool,
@@ -3118,7 +3118,7 @@ fn scalar_cell(value: &Value) -> String {
 }
 
 async fn cmd_attachment_list(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue: &str,
     project: Option<&str>,
     json: bool,
@@ -3201,7 +3201,7 @@ fn preflight_upload(file: &str) -> Result<UploadFile<'_>, PlaneError> {
 /// write, see ADR-0007). Mirrors the Python `upload_attachment`; the Rust
 /// convention refuses duplicates instead of prompting.
 async fn upload_attachment_v1(
-    client: &PbotClient,
+    client: &PlaneClient,
     project_id: &str,
     work_item_id: &str,
     file: &UploadFile<'_>,
@@ -3274,7 +3274,7 @@ async fn upload_attachment_v1(
 /// Deployments whose app endpoints are session-only answer 401/403/404, in
 /// which case the upload falls back to a v1 ISSUE_ATTACHMENT.
 async fn upload_embed_image(
-    client: &PbotClient,
+    client: &PlaneClient,
     project_id: &str,
     work_item_id: &str,
     file: &str,
@@ -3340,7 +3340,7 @@ async fn upload_embed_image(
 /// Upload a file to a work item (mirrors the Python `upload_attachment`):
 /// preflight -> [`upload_attachment_v1`] -> output.
 async fn cmd_attachment_attach(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue: &str,
     file: &str,
     project: Option<&str>,
@@ -3418,7 +3418,7 @@ fn fmt_ts(s: &str) -> String {
 }
 
 async fn cmd_wi_delete(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue: &str,
     project: Option<&str>,
 ) -> Result<(), PlaneError> {
@@ -3436,7 +3436,7 @@ async fn cmd_wi_delete(
 }
 
 async fn cmd_wi_search(
-    client: &PbotClient,
+    client: &PlaneClient,
     base_url: &str,
     query: &str,
     _project: Option<&str>,
@@ -3491,7 +3491,7 @@ async fn cmd_wi_search(
 }
 
 async fn cmd_wi_assign(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue: &str,
     assignee: Option<&str>,
     project: Option<&str>,
@@ -3509,7 +3509,7 @@ async fn cmd_wi_assign(
     Ok(())
 }
 
-async fn cmd_user_list(client: &PbotClient, json: bool) -> Result<(), PlaneError> {
+async fn cmd_user_list(client: &PlaneClient, json: bool) -> Result<(), PlaneError> {
     let members = client.list_members().await?;
     if json {
         output_json(&members);
@@ -3532,7 +3532,7 @@ async fn cmd_user_list(client: &PbotClient, json: bool) -> Result<(), PlaneError
 /// Resolve the `-p` flag shared by every project-scoped command; the same
 /// Validation error `wi create` raises when the project is missing.
 async fn require_project(
-    client: &PbotClient,
+    client: &PlaneClient,
     project: Option<&str>,
 ) -> Result<Project, PlaneError> {
     let project = project.ok_or_else(|| PlaneError::Validation {
@@ -3544,7 +3544,7 @@ async fn require_project(
 
 /// Resolve a label by UUID or fuzzy name against a project's labels.
 async fn resolve_label(
-    client: &PbotClient,
+    client: &PlaneClient,
     project_id: &str,
     query: &str,
 ) -> Result<Label, PlaneError> {
@@ -3565,7 +3565,7 @@ async fn resolve_label(
 
 /// Resolve a state by UUID or fuzzy name against a project's states.
 async fn resolve_state(
-    client: &PbotClient,
+    client: &PlaneClient,
     project_id: &str,
     query: &str,
 ) -> Result<State, PlaneError> {
@@ -3656,7 +3656,7 @@ fn output_state_view(state: &State, json: bool) {
 }
 
 async fn cmd_label_list(
-    client: &PbotClient,
+    client: &PlaneClient,
     project: Option<&str>,
     json: bool,
 ) -> Result<(), PlaneError> {
@@ -3682,7 +3682,7 @@ async fn cmd_label_list(
 }
 
 async fn cmd_label_show(
-    client: &PbotClient,
+    client: &PlaneClient,
     label: &str,
     project: Option<&str>,
     json: bool,
@@ -3694,7 +3694,7 @@ async fn cmd_label_show(
 }
 
 async fn cmd_label_create(
-    client: &PbotClient,
+    client: &PlaneClient,
     name: &str,
     project: Option<&str>,
     color: Option<&str>,
@@ -3714,7 +3714,7 @@ async fn cmd_label_create(
 }
 
 async fn cmd_label_update(
-    client: &PbotClient,
+    client: &PlaneClient,
     label: &str,
     project: Option<&str>,
     name: Option<&str>,
@@ -3736,7 +3736,7 @@ async fn cmd_label_update(
 }
 
 async fn cmd_label_delete(
-    client: &PbotClient,
+    client: &PlaneClient,
     label: &str,
     project: Option<&str>,
 ) -> Result<(), PlaneError> {
@@ -3749,7 +3749,7 @@ async fn cmd_label_delete(
 }
 
 async fn cmd_state_list(
-    client: &PbotClient,
+    client: &PlaneClient,
     project: Option<&str>,
     json: bool,
 ) -> Result<(), PlaneError> {
@@ -3785,7 +3785,7 @@ async fn cmd_state_list(
 }
 
 async fn cmd_state_show(
-    client: &PbotClient,
+    client: &PlaneClient,
     state: &str,
     project: Option<&str>,
     json: bool,
@@ -3797,7 +3797,7 @@ async fn cmd_state_show(
 }
 
 async fn cmd_state_create(
-    client: &PbotClient,
+    client: &PlaneClient,
     name: &str,
     project: Option<&str>,
     group: Option<&str>,
@@ -3820,7 +3820,7 @@ async fn cmd_state_create(
 }
 
 async fn cmd_state_update(
-    client: &PbotClient,
+    client: &PlaneClient,
     state: &str,
     project: Option<&str>,
     name: Option<&str>,
@@ -3847,7 +3847,7 @@ async fn cmd_state_update(
 }
 
 async fn cmd_state_delete(
-    client: &PbotClient,
+    client: &PlaneClient,
     state: &str,
     project: Option<&str>,
 ) -> Result<(), PlaneError> {
@@ -3862,7 +3862,7 @@ async fn cmd_state_delete(
 /// The pages scope a `doc` command targets: the project's pages when `-p` is
 /// given, the workspace's pages otherwise (mirrors the Python commands, where
 /// every scope decision is `project → project pages, else workspace pages`).
-async fn page_scope(client: &PbotClient, project: Option<&str>) -> Result<PageScope, PlaneError> {
+async fn page_scope(client: &PlaneClient, project: Option<&str>) -> Result<PageScope, PlaneError> {
     match project {
         Some(p) => {
             let proj = resolve_project(p, client).await?;
@@ -3875,7 +3875,7 @@ async fn page_scope(client: &PbotClient, project: Option<&str>) -> Result<PageSc
 /// Resolve a page reference by UUID (direct fetch) or fuzzy name (against the
 /// scope's page list), like the other resource resolvers.
 async fn resolve_page(
-    client: &PbotClient,
+    client: &PlaneClient,
     scope: &PageScope,
     query: &str,
 ) -> Result<Page, PlaneError> {
@@ -3940,7 +3940,7 @@ fn output_page_view(page: &Page, json: bool) {
 }
 
 async fn cmd_doc_list(
-    client: &PbotClient,
+    client: &PlaneClient,
     project: Option<&str>,
     json: bool,
 ) -> Result<(), PlaneError> {
@@ -3977,7 +3977,7 @@ async fn cmd_doc_list(
 }
 
 async fn cmd_doc_show(
-    client: &PbotClient,
+    client: &PlaneClient,
     doc: &str,
     project: Option<&str>,
     json: bool,
@@ -4024,7 +4024,7 @@ fn doc_description(
 }
 
 async fn cmd_doc_create(
-    client: &PbotClient,
+    client: &PlaneClient,
     title: &str,
     content: Option<&str>,
     content_md: Option<&str>,
@@ -4046,7 +4046,7 @@ async fn cmd_doc_create(
 // command; grouping further would obscure the clap surface.
 #[allow(clippy::too_many_arguments)]
 async fn cmd_doc_update(
-    client: &PbotClient,
+    client: &PlaneClient,
     doc: &str,
     title: Option<&str>,
     content: Option<&str>,
@@ -4078,7 +4078,7 @@ async fn cmd_doc_update(
 /// ignored (ADR-0007). So this archives with `archived_at` = today, verifies
 /// the response actually carries the date, and only then deletes.
 async fn cmd_doc_archive(
-    client: &PbotClient,
+    client: &PlaneClient,
     doc: &str,
     project: Option<&str>,
 ) -> Result<(), PlaneError> {
@@ -4098,7 +4098,7 @@ async fn cmd_doc_archive(
 }
 
 async fn cmd_doc_delete(
-    client: &PbotClient,
+    client: &PlaneClient,
     doc: &str,
     project: Option<&str>,
 ) -> Result<(), PlaneError> {
@@ -4216,7 +4216,7 @@ fn normalize_module_status(value: Option<&str>) -> Result<Option<String>, PlaneE
 
 /// Resolve a module by UUID or fuzzy name against a project's modules.
 async fn resolve_module(
-    client: &PbotClient,
+    client: &PlaneClient,
     project_id: &str,
     query: &str,
 ) -> Result<Module, PlaneError> {
@@ -4244,7 +4244,7 @@ async fn resolve_module(
 
 /// Resolve a cycle by UUID or fuzzy name against a project's cycles.
 async fn resolve_cycle(
-    client: &PbotClient,
+    client: &PlaneClient,
     project_id: &str,
     query: &str,
 ) -> Result<Cycle, PlaneError> {
@@ -4361,7 +4361,7 @@ fn output_cycle_view(cycle: &Cycle, json: bool) {
 }
 
 async fn cmd_module_list(
-    client: &PbotClient,
+    client: &PlaneClient,
     project: Option<&str>,
     json: bool,
 ) -> Result<(), PlaneError> {
@@ -4390,7 +4390,7 @@ async fn cmd_module_list(
 }
 
 async fn cmd_module_show(
-    client: &PbotClient,
+    client: &PlaneClient,
     module: &str,
     project: Option<&str>,
     json: bool,
@@ -4402,7 +4402,7 @@ async fn cmd_module_show(
 }
 
 async fn cmd_module_create(
-    client: &PbotClient,
+    client: &PlaneClient,
     name: &str,
     opts: &ModuleCreateOpts<'_>,
     json: bool,
@@ -4435,7 +4435,7 @@ async fn cmd_module_create(
 }
 
 async fn cmd_module_update(
-    client: &PbotClient,
+    client: &PlaneClient,
     module: &str,
     opts: &ModuleUpdateOpts<'_>,
     json: bool,
@@ -4468,7 +4468,7 @@ async fn cmd_module_update(
 }
 
 async fn cmd_module_delete(
-    client: &PbotClient,
+    client: &PlaneClient,
     module: &str,
     project: Option<&str>,
 ) -> Result<(), PlaneError> {
@@ -4481,7 +4481,7 @@ async fn cmd_module_delete(
 }
 
 async fn cmd_cycle_list(
-    client: &PbotClient,
+    client: &PlaneClient,
     project: Option<&str>,
     json: bool,
 ) -> Result<(), PlaneError> {
@@ -4512,7 +4512,7 @@ async fn cmd_cycle_list(
 }
 
 async fn cmd_cycle_show(
-    client: &PbotClient,
+    client: &PlaneClient,
     cycle: &str,
     project: Option<&str>,
     json: bool,
@@ -4524,7 +4524,7 @@ async fn cmd_cycle_show(
 }
 
 async fn cmd_cycle_create(
-    client: &PbotClient,
+    client: &PlaneClient,
     name: &str,
     opts: &CycleCreateOpts<'_>,
     json: bool,
@@ -4556,7 +4556,7 @@ async fn cmd_cycle_create(
 }
 
 async fn cmd_cycle_update(
-    client: &PbotClient,
+    client: &PlaneClient,
     cycle: &str,
     opts: &CycleUpdateOpts<'_>,
     json: bool,
@@ -4581,7 +4581,7 @@ async fn cmd_cycle_update(
 }
 
 async fn cmd_cycle_delete(
-    client: &PbotClient,
+    client: &PlaneClient,
     cycle: &str,
     project: Option<&str>,
 ) -> Result<(), PlaneError> {
@@ -4594,7 +4594,7 @@ async fn cmd_cycle_delete(
 }
 
 async fn cmd_cycle_add_item(
-    client: &PbotClient,
+    client: &PlaneClient,
     cycle: &str,
     work_item: &str,
     project: Option<&str>,
@@ -4614,7 +4614,7 @@ async fn cmd_cycle_add_item(
 }
 
 async fn cmd_cycle_remove_item(
-    client: &PbotClient,
+    client: &PlaneClient,
     cycle: &str,
     work_item: &str,
     project: Option<&str>,
@@ -4634,7 +4634,7 @@ async fn cmd_cycle_remove_item(
 }
 
 async fn cmd_cycle_items(
-    client: &PbotClient,
+    client: &PlaneClient,
     base_url: &str,
     cycle: &str,
     project: Option<&str>,
@@ -4723,7 +4723,7 @@ fn html_escape_text(s: &str) -> String {
 }
 
 async fn cmd_intake_list(
-    client: &PbotClient,
+    client: &PlaneClient,
     project: Option<&str>,
     json: bool,
 ) -> Result<(), PlaneError> {
@@ -4754,7 +4754,7 @@ async fn cmd_intake_list(
 }
 
 async fn cmd_intake_create(
-    client: &PbotClient,
+    client: &PlaneClient,
     name: &str,
     project: Option<&str>,
     description: Option<&str>,
@@ -4805,7 +4805,7 @@ fn output_intake_item(item: &IntakeItem, json: bool) {
 /// untouched when the caller is not a project Admin, so a 200 alone is not
 /// proof the triage happened.
 async fn cmd_intake_triage(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue_id: &str,
     project: Option<&str>,
     status: i64,
@@ -4832,7 +4832,7 @@ async fn cmd_intake_triage(
 }
 
 async fn cmd_intake_delete(
-    client: &PbotClient,
+    client: &PlaneClient,
     issue_id: &str,
     project: Option<&str>,
 ) -> Result<(), PlaneError> {
@@ -4843,7 +4843,7 @@ async fn cmd_intake_delete(
 }
 
 async fn cmd_intake_enabled(
-    client: &PbotClient,
+    client: &PlaneClient,
     project: &str,
     json: bool,
 ) -> Result<(), PlaneError> {

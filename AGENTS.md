@@ -68,11 +68,11 @@ Python-era documents), `skill/` (the agent skill), `scripts/e2e.sh`.
 ## Conventions
 
 - **Commands are clap subcommands.** The tree is the `Cli`/`Command` enums in
-  `crates/planebotcli-cli/src/lib.rs`; each handler is a `cmd_*` function taking `&PbotClient` and
+  `crates/planebotcli-cli/src/lib.rs`; each handler is a `cmd_*` function taking `&PlaneClient` and
   `json: bool`, dispatched from the `match` in `run`. Aliases go on the variant
   (`#[command(alias = "ls")]`, `visible_alias = "issues"`), short flags via `#[arg(long, short = 'p')]`,
   and doc comments on variants and fields are the `--help` text.
-- **All HTTP goes through `PbotClient`** (`crates/planebotcli-client`). A handler never calls
+- **All HTTP goes through `PlaneClient`** (`crates/planebotcli-client`). A handler never calls
   `reqwest` itself: the client owns the `X-Api-Key` header, the `/api/v1` prefix, cursor pagination
   (`paginate`), retry on 429/5xx (5 attempts, linear backoff) and the HTTP→`PlaneError` mapping
   (`map_api_error`).
@@ -80,7 +80,7 @@ Python-era documents), `skill/` (the agent skill), `scripts/e2e.sh`.
   serve from the TTL disk cache and refresh it; every create/update/delete calls
   `self.invalidate("<resource>:{workspace}[:{project_id}]")` on the way out. The TTLs are the
   `TTL_*` constants at the top of `planebotcli-client/src/lib.rs`; the global `--no-cache` flag is
-  threaded into `PbotClient::with_cache` and disables both halves. See
+  threaded into `PlaneClient::with_cache` and disables both halves. See
   [ADR-0004](docs/adr/0004-disk-cache-ttls-and-keys.md) (historical).
 - **Errors are typed, and the type carries the exit code.** Return `PlaneError` from
   `planebotcli-core`: `Auth`=2, `NotFound`=3, `Api`=4, `Validation`=5, `Other`=1. `main.rs` prints

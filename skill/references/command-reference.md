@@ -3,6 +3,7 @@
 ## Table of Contents
 - [Global Options](#global-options)
 - [Work Items](#work-items)
+- [Relations](#relations)
 - [Attachments](#attachments)
 - [Projects](#projects)
 - [Cycles](#cycles)
@@ -197,6 +198,33 @@ Description images uploaded via `wi create -i` / `wi update -i` use the same upl
 listed as attachments; the img tag's `src` holds only the asset UUID, which the web editor
 resolves at render time.
 
+## Relations
+
+Command group: `pbot relations` (alias: `relation`)
+
+```
+pbot relations ls ISSUE [--project/-p PROJECT]
+pbot relations add ISSUE --type TYPE -t TARGET [-t TARGET ...] [--project/-p PROJECT]
+pbot relations remove ISSUE --type TYPE -t TARGET [--project/-p PROJECT]
+```
+
+| Parameter | Description |
+|---|---|
+| `ISSUE` | Work item identifier (`ABC-123`), UUID, or name |
+| `--type` | One of `blocking`, `blocked_by`, `duplicate`, `relates_to`, `start_before`, `start_after`, `finish_before`, `finish_after` |
+| `-t` / `--to` | Target work item; repeatable |
+| `--project` / `-p` | Project (required when resolving a target by name) |
+
+`ls` renders one row per related work item (`Type`, `Related`, `Issue ID`), or `No relations for X.`
+when there are none; `--json` returns the raw per-type relation buckets instead of the flattened rows.
+
+`add` resolves every `-t` target inside the same project and rejects a self-relation before writing,
+then reports how many work items were linked.
+
+`remove` **always fails**, by design: Plane exposes relation creation but no delete endpoint. The
+command exists so the missing capability is reported as a validation error instead of appearing to
+succeed.
+
 ## Projects
 
 Command group: `pbot project` (alias: `projects`)
@@ -311,9 +339,20 @@ Command group: `pbot doc` (aliases: `document`, `documents`, `docs`)
 pbot doc ls -p PROJECT
 pbot doc show TITLE -p PROJECT
 pbot doc create --title TITLE --content CONTENT -p PROJECT
+pbot doc create --title TITLE --content-md MARKDOWN -p PROJECT
+pbot doc create --title TITLE --content-html HTML -p PROJECT
 pbot doc update TITLE --content CONTENT -p PROJECT
+pbot doc archive TITLE -p PROJECT
 pbot doc delete TITLE -p PROJECT
 ```
+
+Three mutually exclusive content sources: `-c/--content` (plain text, converted to HTML),
+`--content-md` (native markdown — headings, lists, fenced code, bold/italic, links, tables,
+blockquotes — converted to HTML) and `--content-html` (raw HTML stored verbatim, for rich layout).
+Pasting markdown or HTML through `--content` renders it literally, so pick the matching flag.
+
+`doc archive` sets `archived_at`, leaves the page recoverable in the web UI trash, and verifies the
+archive landed. `doc delete` archives first and then deletes.
 
 ## Comments
 
@@ -322,9 +361,15 @@ Command group: `pbot comment` (alias: `comments`)
 ```
 pbot comment ls ISSUE [--project/-p PROJECT] [--limit/-l N]
 pbot comment create ISSUE --body "TEXT" [--project/-p PROJECT]
+pbot comment create ISSUE --body-md "MARKDOWN" [--project/-p PROJECT]
 pbot comment update COMMENT_ID --issue ISSUE --body "TEXT" [--project/-p PROJECT]
 pbot comment delete COMMENT_ID --issue ISSUE [--project/-p PROJECT]
 ```
+
+Exactly one of `-b/--body` (plain text, converted to HTML) or `--body-md` (markdown subset — code
+fences and spans, bold/italic, lists, auto-linked URLs) is required; they are mutually exclusive.
+`--body-md` is the one to use when the comment contains code or a URL, since plain text keeps the
+backticks literal and leaves URLs unlinked.
 
 `--limit` (default 50) selects the **most recent** N comments, still rendered
 oldest → newest — not the first N chronologically. A limit of `0` or a negative

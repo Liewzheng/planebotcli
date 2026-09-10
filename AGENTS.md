@@ -70,21 +70,49 @@ small to track" or "too small for a PR" exemption.
    change (PLANECLI for this CLI). It carries the scope, the acceptance criterion, and the branch
    name. Work started without an item leaves no trace, and an untraced change is not deliverable.
 2. **Comment on the item as the work moves** — at start (branch + plan), at review (commit range,
-   PR URL, what was verified and how), and at merge. Set the state to match reality: `In Progress`
-   once work begins, `Done` only after the merge is on `main`. A finished change with no comment on
-   its item is not done.
+   PR URL, the `reng` findings and how each was answered), and at merge. Set the state to match
+   reality: `In Progress` once work begins, `Done` only after the merge is on `main`. A finished
+   change with no comment on its item is not done.
 3. **Branch per task**, off `integration-main`, named `<type>/<task>-<slug>` (e.g.
    `feat/planecli-42-relations-remove`). Never commit a task's work straight onto an integration or
    release branch.
-4. **Land it as a pull request.** Push the branch to the `planebotcli` remote and open a PR against
-   `integration-main` (`gh pr create --repo Liewzheng/planebotcli --base integration-main`), then
-   merge it there (`gh pr merge --merge --delete-branch`). Releases move the same way:
-   `integration-main` → `main`.
+4. **Open a pull request — and stop there.** Push the branch to the `planebotcli` remote and open a
+   PR against `integration-main` (`gh pr create --repo Liewzheng/planebotcli --base
+   integration-main`). Never commit a task's work straight onto an integration or release branch,
+   and never merge a PR yourself: merging is the human's call, made after the review gate below.
 5. **Never merge into a protected branch by hand.** `main`, `master`, and `dev` — on every remote,
    `planebotcli`'s `main` included — accept changes only through a merged PR. No
    `git push <remote> <branch>:main`, no `--force`, no local fast-forward that skips review.
 6. **Resync after every merge** — `git fetch planebotcli` and fast-forward `integration-main` — so
    the next task branch starts from the merged state.
+
+### Review gate
+
+No PR is merged until `reng` (the local Rust Code Review Engine) has reviewed it and every finding
+has been answered on the PR.
+
+1. Trigger the review and publish it to the PR as comments:
+
+   ```bash
+   ~/.local/bin/reng review \
+     --mr-url "https://github.com/Liewzheng/planebotcli/pull/<n>" \
+     --github-token "$(gh auth token)" --publish
+   ```
+
+   `reng` is not on `PATH` — call it by absolute path. `--publish` writes the findings as PR
+   comments and leaves the full report under `~/.config/review-engine/reports/`. The GitHub token
+   comes from `gh auth token` (scope `repo`).
+2. **Wait 5 minutes after triggering before reading anything.** Answering a half-published review
+   wastes a round trip.
+3. Read every comment: `gh pr view <n> --repo Liewzheng/planebotcli --comments`.
+4. **Triage every finding and reply to it on the PR — none may be left unanswered.**
+   - **real bug or good suggestion** → fix it on the same branch, push, and reply with what changed;
+   - **false positive** → reply with the evidence that refutes it (`file:line`, project context,
+     history). `reng` is an LLM reviewer that does not know this codebase and over-reports, so
+     triage rather than comply blindly — the `reng-mr-review` skill lists its known failure modes.
+5. **Then ask the human to merge**, reporting the PR URL, every finding, and how each was handled.
+   The human merges; the agent does not. The Plane item goes to `Done` only after that merge lands on
+   `main`.
 
 ## Release management
 
@@ -99,9 +127,10 @@ fork PR branches.
   lives in the workspace root `Cargo.toml` (`[workspace.package] version`).
 - Append a Keep a Changelog section to `CHANGELOG.md` in upstream style, without internal tracker IDs.
 - Cut a release by committing `release: <version>` on `integration-main`, pushing that branch, and
-  merging a PR from `integration-main` into the planebotcli remote's `main`:
-  `gh pr create --repo Liewzheng/planebotcli --base main --head integration-main` then
-  `gh pr merge --merge`. The released line never takes a direct push (see Task workflow).
+  opening a PR from `integration-main` into the planebotcli remote's `main`:
+  `gh pr create --repo Liewzheng/planebotcli --base main --head integration-main`. That PR goes
+  through the same review gate, and the **human merges it** — the released line never takes a direct
+  push and the agent never merges (see Task workflow).
 - After cutting a release, reinstall the local CLI from the merged `integration-main` checkout by
   default (no need to ask first): `cargo install --path crates/planebotcli-cli --locked`
   (installs both `planebotcli` and the `pbot` alias into `~/.cargo/bin`).

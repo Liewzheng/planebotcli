@@ -33,6 +33,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - The project's identity is stated explicitly: `planebotcli` / `pbot` is an
   independent client for Plane, not a fork or downstream of `plane-cli`, and it
   has no upstream to sync with.
+- The build and development toolchain is cargo: the Makefile targets (`install`,
+  `build`, `run`, `test`, `test-v`, `lint`, `format`, `check`, `e2e`, `clean`)
+  wrap cargo, clippy, rustfmt, and `scripts/e2e.sh` instead of uv, pytest, and
+  ruff.
+- The project name is now `pbotcli`: the retired spelling is gone from the
+  repository, and every shell example quotes the installed `pbot` binary.
+
+### Removed
+- The Python implementation was removed — its source package, tests,
+  `pyproject.toml`, and `uv.lock` — leaving the Rust line under `crates/` as the
+  only implementation; the `skills/` directory, the older skill that drove the
+  Python binary, went with it.
+- The documents that describe the Python implementation
+  (`docs/architecture.md`, `docs/caching.md`, the ADRs, `docs/rust-rewrite.md`)
+  are kept, each marked as historical reference rather than current behaviour.
 
 ## [1.1.0] - 2026-09-10
 

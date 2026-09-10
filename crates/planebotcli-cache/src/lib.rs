@@ -1,6 +1,6 @@
 //! Minimal TTL disk cache: one JSON file per key under a cache directory.
 //!
-//! Mirrors the Python CLI's per-resource disk cache (`src/planecli/cache.py`):
+//! Mirrors the removed Python line's per-resource disk cache:
 //! reads are cached with a TTL, and writes invalidate the affected resource.
 //! The ops are synchronous file I/O — small files, fast.
 

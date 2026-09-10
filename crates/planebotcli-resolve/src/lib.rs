@@ -1,7 +1,7 @@
 //! Fuzzy resolution of resource references: UUID, identifier, or fuzzy name.
 //!
-//! Mirrors `src/planecli/utils/fuzzy.py` (rapidfuzz token_sort_ratio, threshold
-//! 60) and `src/planecli/utils/resolve.py`.
+//! Mirrors the removed Python line's `utils/fuzzy.py` (rapidfuzz
+//! token_sort_ratio, threshold 60) and `utils/resolve.py`.
 
 use planebotcli_client::PlaneClient;
 use planebotcli_core::PlaneError;

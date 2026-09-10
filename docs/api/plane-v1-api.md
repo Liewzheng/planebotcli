@@ -1,7 +1,7 @@
 # Plane v1 API — planebotcli interface reference
 
 Detailed documentation of every Plane v1 API endpoint the CLI talks to.
-This is the interface contract for the Rust rewrite (see
+The interface contract the CLI implements (see
 [rust-rewrite.md](../rust-rewrite.md)) and the reference for scripting.
 
 ## Conventions

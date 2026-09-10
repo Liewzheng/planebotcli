@@ -26,7 +26,6 @@ Human-readable tables are written to **stderr**, machine-readable JSON to **stdo
 |---|---|
 | `--json` | Print JSON to stdout; the human table goes to stderr. |
 | `--no-cache` | Bypass the disk cache for this one command. |
-| `-v, --verbose` | Print verbose logs to stderr. |
 | `-h, --help` | Show help for any command. |
 | `-V, --version` | Print the version. |
 

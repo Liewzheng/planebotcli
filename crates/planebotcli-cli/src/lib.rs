@@ -2246,6 +2246,9 @@ fn normalize_priority(raw: Option<&str>) -> Result<Option<String>, PlaneError> {
 /// release and filter metadata; a fuzzy fall-back silently applies the closest
 /// label and pollutes data, so there is none (user feedback PLANECLI-10).
 fn match_label<'a>(query: &str, labels: &'a [Label]) -> Option<&'a Label> {
+    if query.trim().is_empty() {
+        return None;
+    }
     if planebotcli_resolve::is_uuid(query) {
         return labels.iter().find(|l| l.id == query);
     }
@@ -2257,6 +2260,9 @@ fn match_label<'a>(query: &str, labels: &'a [Label]) -> Option<&'a Label> {
 /// Match a state reference: UUID, then exact name (case-insensitive), then fuzzy
 /// name. An exact name wins so a wrong state cannot be applied silently.
 fn match_state<'a>(query: &str, states: &'a [State]) -> Option<&'a State> {
+    if query.trim().is_empty() {
+        return None;
+    }
     if planebotcli_resolve::is_uuid(query) {
         return states.iter().find(|s| s.id == query);
     }
@@ -5348,15 +5354,17 @@ mod tests {
 
     #[test]
     fn label_with_no_name_never_matches() {
-        let labels = vec![label_none("l1")];
+        let labels = vec![label_none("l1"), label("l2", "")];
         assert!(match_label("anything", &labels).is_none());
         assert!(match_label("", &labels).is_none());
+        assert!(match_label("   ", &labels).is_none());
     }
 
     #[test]
     fn state_with_no_name_matches_nothing() {
-        let states = vec![state_none("s1")];
+        let states = vec![state_none("s1"), state("s2", "")];
         assert!(match_state("anything", &states).is_none());
         assert!(match_state("", &states).is_none());
+        assert!(match_state("   ", &states).is_none());
     }
 }

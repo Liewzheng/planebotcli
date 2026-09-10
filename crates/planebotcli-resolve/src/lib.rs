@@ -112,9 +112,13 @@ pub async fn resolve_project(query: &str, client: &PlaneClient) -> Result<Projec
     match match_project(query, &projects) {
         Some(ProjectMatch::ExactIdentifier(p)) | Some(ProjectMatch::ExactName(p)) => Ok(p),
         Some(ProjectMatch::Fuzzy(p)) => {
+            let shown = p
+                .name
+                .as_deref()
+                .or(p.identifier.as_deref())
+                .unwrap_or_default();
             eprintln!(
-                "warning: no exact project named or identified '{query}'; matched '{}' by fuzzy name — use the exact name or identifier to avoid landing on the wrong project",
-                p.name.as_deref().unwrap_or_default()
+                "warning: no exact project named or identified '{query}'; matched '{shown}' by fuzzy name — use the exact name or identifier to avoid landing on the wrong project",
             );
             Ok(p)
         }

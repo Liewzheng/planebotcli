@@ -77,6 +77,9 @@ pub enum ProjectMatch {
 /// name (case-insensitive), then fuzzy name. Exact hits win over a closer fuzzy match
 /// — an identifier like `RENG` must never be resolved onto a different project by name.
 pub fn match_project(query: &str, projects: &[Project]) -> Option<ProjectMatch> {
+    if query.trim().is_empty() {
+        return None;
+    }
     projects
         .iter()
         .find(|p| {

@@ -61,10 +61,36 @@ Request flow: **command → resolve → async SDK wrapper → (cache | Plane SDK
 - **Reference versioned docs, not tracker issues.** Do not cite Plane/Linear issue IDs or external tracker URLs in code comments — they are unreachable after delivery. Point to an ADR or guide instead.
 - **Tests never hit a real Plane instance.** `conftest.py` autouses a `mem://` cache backend and provides a `mock_plane_client` fixture. Mock the SDK/resolvers; prefer testing pure logic (normalizers, fuzzy matching, resolution) directly.
 
+## Task workflow
+
+Every change — code, docs, or config — is tracked and lands through review. There is no "too
+small to track" or "too small for a PR" exemption.
+
+1. **Find or create the Plane work item first.** One item per task, in the project that owns the
+   change (PLANECLI for this CLI). It carries the scope, the acceptance criterion, and the branch
+   name. Work started without an item leaves no trace, and an untraced change is not deliverable.
+2. **Comment on the item as the work moves** — at start (branch + plan), at review (commit range,
+   PR URL, what was verified and how), and at merge. Set the state to match reality: `In Progress`
+   once work begins, `Done` only after the merge is on `main`. A finished change with no comment on
+   its item is not done.
+3. **Branch per task**, off `integration-main`, named `<type>/<task>-<slug>` (e.g.
+   `feat/planecli-42-relations-remove`). Never commit a task's work straight onto an integration or
+   release branch.
+4. **Land it as a pull request.** Push the branch to the `planebotcli` remote and open a PR against
+   `integration-main` (`gh pr create --repo Liewzheng/planebotcli --base integration-main`), then
+   merge it there (`gh pr merge --merge --delete-branch`). Releases move the same way:
+   `integration-main` → `main`.
+5. **Never merge into a protected branch by hand.** `main`, `master`, and `dev` — on every remote,
+   `planebotcli`'s `main` included — accept changes only through a merged PR. No
+   `git push <remote> <branch>:main`, no `--force`, no local fast-forward that skips review.
+6. **Resync after every merge** — `git fetch planebotcli` and fast-forward `integration-main` — so
+   the next task branch starts from the merged state.
+
 ## Release management
 
-The release repo `github.com/Liewzheng/planebotcli` keeps a single `main` that mirrors the local
-`integration-main` branch. Since **1.0.0 (2026-09-09) the CLI is the Rust rewrite** (`planebotcli` /
+The release repo `github.com/Liewzheng/planebotcli` holds two long-lived branches: `integration-main`
+(the integration line where completed tasks accumulate) and `main` (the released line, which only
+advances through a PR from `integration-main`). Since **1.0.0 (2026-09-09) the CLI is the Rust rewrite** (`planebotcli` /
 `pbot`, a Cargo workspace in `crates/`); the Python line is frozen to bug fixes. Version and
 changelog are managed by the agent on `integration-main` only — never on upstream `main` or the
 fork PR branches.
@@ -72,8 +98,10 @@ fork PR branches.
 - Keep SemVer: bump the minor for new commands/flags, the patch for bug fixes. The single version
   lives in the workspace root `Cargo.toml` (`[workspace.package] version`).
 - Append a Keep a Changelog section to `CHANGELOG.md` in upstream style, without internal tracker IDs.
-- Cut a release by committing `release: <version>` on `integration-main` and pushing it to the
-  planebotcli remote's `main`: `git push planebotcli integration-main:main`.
+- Cut a release by committing `release: <version>` on `integration-main`, pushing that branch, and
+  merging a PR from `integration-main` into the planebotcli remote's `main`:
+  `gh pr create --repo Liewzheng/planebotcli --base main --head integration-main` then
+  `gh pr merge --merge`. The released line never takes a direct push (see Task workflow).
 - After cutting a release, reinstall the local CLI from the merged `integration-main` checkout by
   default (no need to ask first): `cargo install --path crates/planebotcli-cli --locked`
   (installs both `planebotcli` and the `pbot` alias into `~/.cargo/bin`).
@@ -83,7 +111,7 @@ fork PR branches.
   Releases page. npm publish needs an npm scope/token (cargo-dist npm installer config);
   crates.io `cargo publish` needs a crates.io token.
 - Update the corresponding Plane task the same turn a release lands: progress comment + fitting
-  state (per the planecli skill etiquette).
+  state (per the pbot skill etiquette).
 
 ## Key docs
 

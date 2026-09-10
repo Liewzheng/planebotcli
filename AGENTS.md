@@ -1,6 +1,24 @@
-# PlaneCLI
+# planebotcli (pbot)
 
-A Python CLI for [Plane.so](https://plane.so) (SaaS or self-hosted) that manages projects, work items, cycles, modules, documents, labels, states, intake queues, and comments. Its defining feature is **fuzzy resource resolution**: any resource can be referenced by name, identifier (`ABC-123`), or UUID. Built with cyclopts, Rich, rapidfuzz, cashews, and the official `plane-sdk`.
+`pbot` is an independent command-line client for [Plane.so](https://plane.so) (SaaS or self-hosted):
+projects, work items, cycles, modules, documents, labels, states, intake queues, and comments. Its
+defining feature is **fuzzy resource resolution** — any resource can be referenced by name,
+identifier (`ABC-123`), or UUID. It is a Rust workspace under `crates/`; the Python implementation in
+`src/planecli` is a frozen legacy line — bug fixes only, no new features — kept for history.
+
+## Identity
+
+This project is **not a fork, a port, or a downstream of `plane-cli`**, and `plane-cli` is not its
+upstream. `pbot` began from that codebase and has since evolved on its own; the two have no
+relationship to maintain.
+
+- The only home is `github.com/Liewzheng/planebotcli`. There is nowhere to sync from and nobody to
+  send pull requests to.
+- Do not reintroduce the vocabulary of a fork: no "upstream", no "syncing with upstream", no PRs
+  against another repository, no mirroring branches back and forth.
+- Historical references (`plane-cli`, the Python line, the ADRs written for it) stay as history and
+  as provenance; they are not a live dependency or a source of incoming changes.
+- New work is judged on its own merits — what `pbot` should be — not on parity with `plane-cli`.
 
 ## Language
 
@@ -163,12 +181,13 @@ unauthenticated, stop and say so rather than driving the API by hand.
 
 ## Release management
 
-The release repo `github.com/Liewzheng/planebotcli` holds two long-lived branches: `integration-main`
+The repository `github.com/Liewzheng/planebotcli` holds two long-lived branches: `integration-main`
 (the integration line where completed tasks accumulate) and `main` (the released line, which only
-advances through a PR from `integration-main`). Since **1.0.0 (2026-09-09) the CLI is the Rust rewrite** (`planebotcli` /
-`pbot`, a Cargo workspace in `crates/`); the Python line is frozen to bug fixes. Version and
-changelog are managed by the agent on `integration-main` only — never on upstream `main` or the
-fork PR branches.
+advances through a PR from `integration-main`). Since **1.0.0 (2026-09-09) the CLI is the Rust line**
+(`planebotcli` / `pbot`, a Cargo workspace in `crates/`); the Python line in `src/planecli` is frozen
+— bug fixes only, no new features — and kept for history. The version and the changelog are edited on
+`integration-main`, the branch tasks land on; there is no second repository they could be edited in
+(see Identity).
 
 - Keep SemVer: bump the minor for new commands/flags, the patch for bug fixes. The single version
   lives in the workspace root `Cargo.toml` (`[workspace.package] version`).

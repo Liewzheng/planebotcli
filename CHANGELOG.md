@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   the entries at release time.
 - The CLI command reference was rewritten for the Rust line, covering all 58
   subcommands; the previous one still described the 0.7.0 Python line.
+- The project's identity is stated explicitly: `planebotcli` / `pbot` is an
+  independent client for Plane, not a fork or downstream of `plane-cli`, and it
+  has no upstream to sync with.
 
 ## [1.1.0] - 2026-09-10
 

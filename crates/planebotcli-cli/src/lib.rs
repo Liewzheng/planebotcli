@@ -5286,6 +5286,28 @@ mod tests {
         }
     }
 
+    fn label_none(id: &str) -> Label {
+        Label {
+            id: id.to_string(),
+            name: None,
+            color: None,
+            description: None,
+            parent: None,
+            created_at: None,
+        }
+    }
+
+    fn state_none(id: &str) -> State {
+        State {
+            id: id.to_string(),
+            name: None,
+            group: None,
+            color: None,
+            sequence: None,
+            created_at: None,
+        }
+    }
+
     #[test]
     fn label_matches_exactly_only() {
         let labels = vec![
@@ -5322,5 +5344,19 @@ mod tests {
             Some("s1")
         );
         assert!(match_state("zzz", &states).is_none());
+    }
+
+    #[test]
+    fn label_with_no_name_never_matches() {
+        let labels = vec![label_none("l1")];
+        assert!(match_label("anything", &labels).is_none());
+        assert!(match_label("", &labels).is_none());
+    }
+
+    #[test]
+    fn state_with_no_name_matches_nothing() {
+        let states = vec![state_none("s1")];
+        assert!(match_state("anything", &states).is_none());
+        assert!(match_state("", &states).is_none());
     }
 }

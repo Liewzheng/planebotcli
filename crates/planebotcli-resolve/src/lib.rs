@@ -34,10 +34,15 @@ pub struct BestMatch<T> {
 }
 
 /// Return the item (and score) closest to `query` with score >= threshold.
+/// A blank query never matches — an empty string would otherwise score 100
+/// against a resource with an empty name.
 pub fn find_best_match<'a, T, F>(query: &str, items: &'a [T], key: F) -> Option<BestMatch<&'a T>>
 where
     F: Fn(&T) -> &str,
 {
+    if query.trim().is_empty() {
+        return None;
+    }
     let mut best: Option<(f64, &'a T)> = None;
     for item in items {
         let score = token_sort_ratio(query, key(item));
@@ -331,5 +336,12 @@ mod tests {
         assert!(matches!(m, ProjectMatch::Fuzzy(p) if p.id == "p-sirena"));
         // A query that matches nothing exactly and is too distant fuzzy-wise → None.
         assert!(match_project("zzz-nothing", &projects).is_none());
+    }
+
+    #[test]
+    fn project_empty_query_has_no_match() {
+        let projects = vec![proj("p-reng", "ReviewEngine", "RENG")];
+        assert!(match_project("", &projects).is_none());
+        assert!(match_project("   ", &projects).is_none());
     }
 }

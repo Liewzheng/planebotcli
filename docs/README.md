@@ -6,14 +6,16 @@ intake queues, and comments. Its defining feature is **fuzzy resource
 resolution**: any resource can be referenced by a name, an identifier
 (`ABC-123`), or a UUID.
 
-The current release line is the Python implementation (v0.7.0); a Rust rewrite
-is in progress (see [rust-rewrite.md](rust-rewrite.md)).
+The current release line is the Rust implementation (v1.1.0, binary `pbot`); the
+Python implementation (v0.7.0) is the legacy line it replaces
+(see [rust-rewrite.md](rust-rewrite.md)).
 
 ## Docs index
 
 | Document | Contents |
 |---|---|
-| [cli-command-reference.md](cli-command-reference.md) | Every command, flag, alias, and an example |
+| [cli-command-reference.md](cli-command-reference.md) | Every command, subcommand, flag, alias, and an example (English) |
+| [cli-command-reference.zh.md](cli-command-reference.zh.md) | 同上，中文版 |
 | [api/plane-v1-api.md](api/plane-v1-api.md) | The Plane v1 API surface the CLI uses — method, path, params, request/response |
 | [architecture.md](architecture.md) | Layered architecture, request flow, ADRs (Python line) |
 | [caching.md](caching.md) | Cache TTLs, keys, invalidation |

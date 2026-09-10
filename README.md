@@ -504,6 +504,7 @@ tests/
 
 ## Documentation
 
+- [CLI command reference](docs/cli-command-reference.md) — Every command, flag, alias, and an example ([中文](docs/cli-command-reference.zh.md))
 - [Architecture](docs/architecture.md) — System overview, layers, and request flow
 - [Caching](docs/caching.md) — TTLs, cache keys, and invalidation
 - [Architecture Decision Records](docs/adr/) — Why the CLI is built the way it is

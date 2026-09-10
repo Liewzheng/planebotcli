@@ -1,9 +1,9 @@
 //! Fuzzy resolution of resource references: UUID, identifier, or fuzzy name.
 //!
-//! Mirrors `src/planecli/utils/fuzzy.py` (rapidfuzz token_sort_ratio, threshold
-//! 60) and `src/planecli/utils/resolve.py`.
+//! Mirrors the removed Python line's `utils/fuzzy.py` (rapidfuzz
+//! token_sort_ratio, threshold 60) and `utils/resolve.py`.
 
-use planebotcli_client::PlaneClient;
+use planebotcli_client::PbotClient;
 use planebotcli_core::PlaneError;
 use planebotcli_types::Project;
 
@@ -62,7 +62,7 @@ pub fn is_uuid(s: &str) -> bool {
 }
 
 /// Resolve a project by UUID, or fuzzy-match its name.
-pub async fn resolve_project(query: &str, client: &PlaneClient) -> Result<Project, PlaneError> {
+pub async fn resolve_project(query: &str, client: &PbotClient) -> Result<Project, PlaneError> {
     if is_uuid(query) {
         return client.get_project(query).await;
     }
@@ -80,7 +80,7 @@ pub async fn resolve_project(query: &str, client: &PlaneClient) -> Result<Projec
 /// fuzzy-matched against workspace member names.
 pub async fn resolve_user_query(
     query: &str,
-    client: &PlaneClient,
+    client: &PbotClient,
 ) -> Result<(String, String), PlaneError> {
     if query.eq_ignore_ascii_case("me") {
         let me = client.get_me().await?;
@@ -172,7 +172,7 @@ fn match_work_item(
 pub async fn locate_work_item_in_project(
     query: &str,
     project: &planebotcli_types::Project,
-    client: &PlaneClient,
+    client: &PbotClient,
 ) -> Result<LocatedWorkItem, PlaneError> {
     let items = client.list_work_items(&project.id).await?;
     let identifier = project.identifier.clone().unwrap_or_default();
@@ -189,7 +189,7 @@ pub async fn locate_work_item_in_project(
 /// or name. Cross-project searches fire many requests, so projects are paced.
 pub async fn locate_work_item_across(
     query: &str,
-    client: &PlaneClient,
+    client: &PbotClient,
 ) -> Result<LocatedWorkItem, PlaneError> {
     let projects = client.list_projects().await?;
     let mut candidates: Vec<(planebotcli_types::WorkItem, String)> = Vec::new();

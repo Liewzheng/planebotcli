@@ -3,7 +3,7 @@
 让 AI 助手通过 [pbot / planebotcli](https://github.com/Liewzheng/planebotcli)（`pbot` 命令，Rust 版 CLI）
 管理 Plane.so（SaaS 或自托管）上的 work item、project、cycle、module、label、state、document、intake、comment。
 
-> pbot 是原 `planecli`（Python 版）的 Rust 重写，v1.0.0 起功能全对等；`planecli` 已退役。
+> `pbot` 是 Rust 版 CLI；仓库里原先的 Python 实现已移除，不再是可选项。
 
 ## 这个仓库里有什么
 

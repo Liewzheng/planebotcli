@@ -1,6 +1,6 @@
 //! Configuration with precedence: CLI flags > env vars > `~/.plane_api`.
 //!
-//! Mirrors `src/planecli/config.py`: the config file is `key=value` lines with
+//! Mirrors the removed Python line's config module: the config file is `key=value` lines with
 //! lowercase keys (`base_url`, `api_key`, `workspace`), `#` comments, chmod 600.
 
 use std::collections::HashMap;
@@ -170,7 +170,7 @@ mod tests {
     #[test]
     fn parses_config_file_lines() {
         let mut path = std::env::temp_dir();
-        path.push(format!("planecli_test_cfg_{}", std::process::id()));
+        path.push(format!("pbotcli_test_cfg_{}", std::process::id()));
         std::fs::write(&path, "# comment\nbase_url = \"http://x\"\napi_key=abc\n").unwrap();
         let values = read_config_file_from(&path);
         std::fs::remove_file(&path).unwrap();
@@ -182,7 +182,7 @@ mod tests {
     #[test]
     fn save_config_writes_key_value_file() {
         let mut path = std::env::temp_dir();
-        path.push(format!("planecli_save_test_{}", std::process::id()));
+        path.push(format!("pbotcli_save_test_{}", std::process::id()));
         write_config_file(&path, "http://plane.example", "secret", "ws1").unwrap();
         let values = read_config_file_from(&path);
         let permissions = std::fs::metadata(&path).unwrap().permissions();

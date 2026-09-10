@@ -58,7 +58,7 @@ impl PageScope {
     }
 }
 
-pub struct PlaneClient {
+pub struct PbotClient {
     http: reqwest::Client,
     base_url: String,
     api_key: String,
@@ -67,7 +67,7 @@ pub struct PlaneClient {
     no_cache: bool,
 }
 
-impl PlaneClient {
+impl PbotClient {
     pub fn new(cfg: &Config) -> Result<Self, PlaneError> {
         Self::with_cache(cfg, false)
     }
@@ -1444,7 +1444,7 @@ mod http_tests {
             )
             .create_async()
             .await;
-        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let client = PbotClient::with_cache(&cfg(&server.url()), true).unwrap();
         let me = client.get_me().await.unwrap();
         assert_eq!(me.id, "u1");
         assert_eq!(me.display_name.as_deref(), Some("Bot"));
@@ -1462,7 +1462,7 @@ mod http_tests {
             .with_body(r#"{"results":[{"id":"p1","name":"One","identifier":"ONE","created_at":"2026-01-01T00:00:00Z"}],"next_cursor":null,"next_page_results":false}"#)
             .create_async()
             .await;
-        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let client = PbotClient::with_cache(&cfg(&server.url()), true).unwrap();
         let projects = client.list_projects().await.unwrap();
         assert_eq!(projects.len(), 1);
         assert_eq!(projects[0].identifier.as_deref(), Some("ONE"));
@@ -1479,7 +1479,7 @@ mod http_tests {
             .with_body(r#"{"name":["This field is required."]}"#)
             .create_async()
             .await;
-        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let client = PbotClient::with_cache(&cfg(&server.url()), true).unwrap();
         let err = client.get_me().await.unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("HTTP 400"), "{msg}");
@@ -1497,7 +1497,7 @@ mod http_tests {
             .with_status(404)
             .create_async()
             .await;
-        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let client = PbotClient::with_cache(&cfg(&server.url()), true).unwrap();
         let err = client.get_work_item("p1", "wi1").await.unwrap_err();
         assert_eq!(err.exit_code(), planebotcli_core::errors::EXIT_NOT_FOUND);
         m.assert_async().await;
@@ -1514,7 +1514,7 @@ mod http_tests {
             .with_body(r#"{"id":"wi1","parent":"wi2"}"#)
             .create_async()
             .await;
-        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let client = PbotClient::with_cache(&cfg(&server.url()), true).unwrap();
         client
             .set_work_item_parent("p1", "wi1", Some("wi2"))
             .await
@@ -1535,7 +1535,7 @@ mod http_tests {
             .with_body(r#"{"id":"wi1","parent":null}"#)
             .create_async()
             .await;
-        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let client = PbotClient::with_cache(&cfg(&server.url()), true).unwrap();
         client
             .set_work_item_parent("p1", "wi1", None)
             .await
@@ -1557,7 +1557,7 @@ mod http_tests {
             .with_body(body)
             .create_async()
             .await;
-        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let client = PbotClient::with_cache(&cfg(&server.url()), true).unwrap();
         let relations = client.list_relations("p1", "wi1").await.unwrap();
         assert_eq!(relations["blocking"][0]["issue_id"], "wi2");
         m.assert_async().await;
@@ -1580,7 +1580,7 @@ mod http_tests {
             .with_body(r#"{"blocking":[{"project_id":"p1","issue_id":"wi2"}]}"#)
             .create_async()
             .await;
-        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let client = PbotClient::with_cache(&cfg(&server.url()), true).unwrap();
         let created = client
             .create_relations(
                 "p1",

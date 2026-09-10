@@ -19,13 +19,10 @@
 
 | Flag | Description |
 |---|---|
-| `--verbose` / `-v` | Enable verbose logging |
 | `--no-cache` | Bypass cache for this command |
 | `--json` | Output JSON to stdout (available on most commands) |
 | `--version` | Show version |
 | `--help` / `-h` | Show help |
-
-Environment variable `PLANECLI_NO_CACHE=1` disables cache globally.
 
 ### Command aliases
 
@@ -60,6 +57,7 @@ pbot wi ls [OPTIONS]
 | `--assignee` | Filter by assignee name or `me` |
 | `--state` | Filter by state name (comma-separated for OR) |
 | `--labels` | Filter by label name (comma-separated for OR) |
+| `--parent` | List children of a parent work item (ABC-123, UUID, or name) |
 | `--sort` | Sort by: `created` (default), `updated` |
 | `--limit` / `-l` | Max results (default: 50) |
 | `--json` | JSON output |
@@ -99,10 +97,9 @@ pbot wi create TITLE [OPTIONS]
 | `--state` | State name (e.g. `Todo`, `In Progress`) |
 | `--labels` | Comma-separated label names |
 | `--priority` | `urgent`, `high`, `medium`, `low`, `none` (or 0-4) |
-| `--module` | Module name or UUID |
 | `--parent` | Parent work item identifier (ABC-123) for sub-issues |
-| `--estimate` / `-e` | Story point estimate |
-| `--description` / `-d` | Description. Stored as raw HTML, not markdown — see the Gotchas in SKILL.md |
+| `--description` / `-d` | Description as plain text (wrapped in a paragraph) |
+| `--desc-md` | Description as markdown (converted to HTML). Mutually exclusive with `-d` |
 | `--image` / `-i` | Image file path to embed in the description (repeatable). Uploaded and appended as an img tag |
 | `--force` | Upload images even if an attachment with the same file name already exists |
 | `--start-date` | Start date `YYYY-MM-DD`. Bad formats are rejected (exit 5) |
@@ -125,7 +122,10 @@ pbot wi update ISSUE [OPTIONS]
 | `--labels` | Comma-separated labels to set |
 | `--clear-labels` | Remove all labels |
 | `--name` | New title |
-| `--description` / `-d` | New description. Stored as raw HTML, not markdown |
+| `--description` / `-d` | New description as plain text (wrapped in a paragraph) |
+| `--desc-md` | New description as markdown (converted to HTML). Mutually exclusive with `-d` |
+| `--parent` | Set the parent work item (ABC-123, UUID, or name). Mutually exclusive with `--clear-parent` |
+| `--clear-parent` | Remove the parent, making the work item top-level |
 | `--image` / `-i` | Image file path to embed in the description (repeatable). Uploaded and appended as an img tag |
 | `--force` | Upload images even if an attachment with the same file name already exists |
 | `--start-date` | New start date `YYYY-MM-DD` |
@@ -190,7 +190,8 @@ pbot attachment attach ISSUE -f FILE [-p PROJECT] [--force] [--json]
 
 Upload follows the API's three-step flow: register an asset (presigned S3 URL), `PUT` the
 binary, then mark `is_uploaded` and re-read the asset to verify. Without `--force`, a duplicate
-file name prompts for confirmation on a TTY and is rejected in non-interactive runs.
+file name is refused with a validation error (exit 5) and a hint to re-run with `--force` — the
+CLI never prompts.
 
 Description images uploaded via `wi create -i` / `wi update -i` use the same upload but are not
 listed as attachments; the img tag's `src` holds only the asset UUID, which the web editor

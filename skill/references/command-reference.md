@@ -22,7 +22,7 @@
 |---|---|
 | `--no-cache` | Bypass cache for this command |
 | `--json` | Output JSON to stdout (available on most commands) |
-| `--version` | Show version |
+| `--version` / `-V` | Show version |
 | `--help` / `-h` | Show help |
 
 ### Command aliases

@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-09-10
+
+### Added
+- `wi update --parent <ID|UUID>` and `--clear-parent`: set or clear a work item's
+  parent (self/cross-project/not-found are rejected locally, listing candidates).
+- `relations` command group (alias `relation`): `ls` (the 8 Plane relation buckets)
+  and `add --type T --to TARGET...` (blocking/blocked_by/duplicate/relates_to/
+  start_before/start_after/finish_before/finish_after). Removal needs a backend
+  DELETE endpoint that does not exist yet (tracked separately).
+- `wi show` now returns `sub_issues` (child work items) and surfaces `parent`.
+
 ## [1.0.5] - 2026-09-10
 
 ### Fixed

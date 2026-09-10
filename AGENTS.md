@@ -91,7 +91,8 @@ small to track" or "too small for a PR" exemption.
 No PR is merged until `reng` (the local Rust Code Review Engine) has reviewed it and every finding
 has been answered on the PR.
 
-1. **Trigger the review and publish it to the PR.** `reng` is usually not on `PATH`:
+1. **Trigger the review and publish it to the PR.** `<n>` is the PR number kept in step 4 above
+   (`gh pr view --json number -q .number` prints it again). `reng` is usually not on `PATH`:
 
    ```bash
    RENG=$(command -v reng || echo ~/.local/bin/reng)
@@ -102,24 +103,37 @@ has been answered on the PR.
 
    The GitHub token comes from `gh auth token` (scope `repo`); `--publish` also leaves the full JSON
    report under `~/.config/review-engine/reports/`. On GitHub the report is posted as a **PR review
-   body**, so read it with
-   `gh api repos/Liewzheng/planebotcli/pulls/<n>/reviews -q '.[0].body'` — `gh pr view --comments`
-   fails on this repo with a GraphQL Projects-classic deprecation error.
+   body**, so read it with:
+
+   ```bash
+   gh api "repos/Liewzheng/planebotcli/pulls/<n>/reviews" \
+     -q '[.[] | select(.body | startswith("# CodeReview Board"))] | last | .body'
+   ```
+
+   Filter on the report heading rather than taking `.[0]`: other reviews may sit on the PR, and
+   `.[0]` would then hand back the wrong body. `gh pr view --comments` fails on this repo with a
+   GraphQL Projects-classic deprecation error, so do not reach for it.
 2. **Wait 5 minutes after triggering before reading anything.** This pause is the maintainer's
    requirement, not a guess at how long `reng` takes (`reng review` blocks until the review is
    published, so the wait is a deliberate cooling-off window).
 3. **A failed or empty publish is not a pass.** `--publish` can exit non-zero with `inline notes`
-   while the report *was* published — check the PR before re-running, since a re-run posts a second
-   copy. But if `reng` did not run, died before publishing, or the PR carries no report at all, stop:
-   report the failure on the PR and to the human, and do not ask for a merge.
-4. **Triage every finding and reply to it on the PR — none may be left unanswered.**
+   while the report *was* published, and re-running updates the existing report in place rather than
+   posting a second copy — check the PR before re-running. But if `reng` did not run, died before
+   publishing, or the PR carries no report at all, stop: report the failure on the PR and to the
+   human, and do not ask for a merge. An expert rendered as *"输出解析失败 / failed to parse its
+   output"* counts as **unreviewed, not clean** — say so when reporting the findings.
+4. **Triage every finding and reply to it on the PR — none may be left unanswered.** The report is a
+   review body, so there is normally no inline thread to reply in; post one
+   `gh pr comment <n> --repo Liewzheng/planebotcli --body-file <file>` that lists every finding and
+   its disposition.
    - **real bug or good suggestion** → fix it on the same branch, push, and reply with what changed;
    - **needs a human decision, or a change too large for this branch** → reply saying so and carry it
      into the merge request; never drop it silently;
    - **false positive** → reply with the evidence that refutes it (`file:line`, project context,
      history). `reng` is an LLM reviewer that does not know this codebase and over-reports, so triage
-     rather than comply blindly — check the `reng-mr-review` skill's list of known failure modes
-     before calling a finding a false positive.
+     rather than comply blindly — check the `reng-mr-review` skill
+     (`~/.kimi-code/skills/reng-mr-review/SKILL.md`) for its known failure modes before calling a
+     finding a false positive.
 5. **Then ask the human to merge**, reporting the PR URL, every finding, and how each was handled.
    The human merges; the agent does not. The Plane item goes to `Done` only after that merge lands on
    `main`.

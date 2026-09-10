@@ -1,4 +1,4 @@
-# pbotcli
+# planebotcli
 
 Command-line client for Plane.so (SaaS or self-hosted). Its defining trait is **fuzzy
 resource resolution**: any resource can be referenced by name, identifier, or UUID. This

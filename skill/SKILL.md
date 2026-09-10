@@ -1,21 +1,19 @@
 ---
 name: pbot
-description: "Manage Plane.so through the pbot / planebotcli CLI (the Rust rewrite of the former Python planecli) — work items, projects, cycles/sprints, modules, labels, states, documents, intake queue, comments. Use when the user mentions Plane, pbot, planebotcli, planecli, or a work-item identifier like ABC-123, or asks about tasks, sprints, or backlogs in a project where Plane is the tracker."
+description: "Manage Plane.so through the pbot / planebotcli CLI — work items, projects, cycles/sprints, modules, labels, states, documents, intake queue, comments, relations. Use when the user mentions Plane, pbot, planebotcli, planecli, or a work-item identifier like ABC-123, or asks about tasks, sprints, or backlogs in a project where Plane is the tracker."
 allowed-tools: Bash(pbot *, planebotcli *)
 metadata:
-  author: Patrick Alves
+  author: planebotcli maintainers
   version: "2.0"
 ---
 
 # pbot — PlanebotCLI
 
-**The command is `pbot`** (alias of `planebotcli`, the Rust rewrite of the
-Python `planecli`) — a single static binary installed at `~/.cargo/bin` (both
-`pbot` and `planebotcli` are installed). Since v1.0.0 it has **full feature
-parity** with the retired Python line: every command group (whoami, configure, project,
-wi, comment, attachment, doc, intake, label, state, module, cycle, user,
-cache), fuzzy resolution, `--json` dual output, caching, markdown input and
-inline images.
+**The command is `pbot`** (short alias of the full binary `planebotcli`) — a single
+static binary installed at `~/.cargo/bin` (both `pbot` and `planebotcli` are
+installed). Every command group (whoami, configure, project, wi, comment,
+relations, attachment, doc, intake, label, state, module, cycle, user, cache),
+fuzzy resolution, `--json` dual output, caching, markdown input and inline images.
 
 Install / update the local binary from the release line after each release:
 
@@ -33,8 +31,10 @@ cargo install --path <repo>/crates/planebotcli-cli --locked   # repo = integrati
 
 ## Setup & Authentication
 
-Installed from our release repo `github.com/Liewzheng/planebotcli` (integration-main = that
-repo's `main`; version and changelog managed there). After each new release, reinstall by
+Installed from our release repo `github.com/Liewzheng/planebotcli`, which holds two
+long-lived branches: `integration-main` (the integration line where completed tasks
+accumulate) and `main` (the released line). The version and the changelog are edited on
+`integration-main`; `main` only advances through a PR from it. After each new release, reinstall by
 default — do not ask first:
 `cargo install --path crates/planebotcli-cli --locked` (run in the integration-main checkout;
 installs both `planebotcli` and `pbot` into `~/.cargo/bin`)
@@ -72,7 +72,7 @@ pbot wi ls --assignee me --state "In Progress" --json      # across all projects
 # Create
 pbot wi create "Title" -p "Project" --assign me --priority urgent --state "Todo" --json
 pbot wi create "Sub-task" --parent ABC-123 --assign "Patrick" --labels "backend" --json
-pbot wi create "Title" -p "Project" -d "<p>Body.</p>" --json   # -d is HTML — see Gotchas
+pbot wi create "Title" -p "Project" -d "Plain text description." --json   # -d wraps in a paragraph; --desc-md for markdown
 
 # Update
 pbot wi update ABC-123 --state "Done" --priority none --json
@@ -93,7 +93,7 @@ Priority: `urgent`, `high`, `medium`, `low`, `none` (or `1`–`4`, `0`).
 
 ```bash
 pbot attachment ls -p "Project" ABC-123 --json
-pbot attachment attach -p "Project" ABC-123 -f ./log.txt --json   # prompts if the name exists; --force skips
+pbot attachment attach -p "Project" ABC-123 -f ./log.txt --json   # refuses a duplicate name; --force overrides
 pbot wi create "Title" -p "Project" -i ./screenshot.png --json    # repeatable -i embeds images in the description
 pbot wi update ABC-123 -i ./shot.png --json
 ```
@@ -195,7 +195,7 @@ Chinese, like the existing task comments):
 - Close with a parenthetical of technical context: branch name in backticks (rendered as a code
   tag by pbot — the editor stores HTML and does not parse markdown, so the CLI converts
   `code` and fenced blocks itself), what the branch
-  contains, and where it landed (`已合入 integration/selfhost`).
+  contains, and where it landed (`已合入 integration-main`).
 - No `-` bullet lists, no restating what the links say, no filler. Multi-line bodies: write to a
   temp file and pass `--body "$(cat file)"`.
 
@@ -203,8 +203,8 @@ Full example:
 
 ```
 已完成：
-PR https://github.com/Liewzheng/planebot/pull/N
-（分支 `fix/table-perf`，表格插件的 O(表格数×文档) 修复 + 回归测试，已合入 integration/selfhost）
+PR https://github.com/Liewzheng/planebotcli/pull/N
+（分支 `docs/planecli-47-repo-cleanup`，统一 planebotcli 命名 + skill 与 CLI 行为对齐，已合入 integration-main）
 ```
 
 **Separate items with a blank line.** The comment body is plain text: a blank line starts a new
@@ -212,8 +212,8 @@ paragraph, a single newline only becomes a br tag. `1) ...\n2) ...` on adjacent 
 joined on the web UI — put an empty line between list items (write the body to a file with real
 blank lines, not a one-liner with `\n` escapes).
 
-**No upstream submission.** pbot / planebot are an independent distribution: fixes land on the
-`integration/selfhost` line and are never opened as issues or pull requests against Plane upstream
+**No upstream submission.** pbot / planebotcli are an independent distribution: fixes land on the
+`integration-main` line and are never opened as issues or pull requests against Plane upstream
 or any other repository. There is no upstream-survey step and no `已提交上游：` comment to write —
 a task that records a finished fix names the local branch and the merge that carried it.
 
@@ -234,10 +234,9 @@ format: PLANECLI-2 (feature) and RENG-1 (epic) in the PLANE/ReviewEngine project
 - Write flowing paragraphs, not telegram notes; use headings and lists. Numbers and
   verification evidence (test counts, live checks) beat adjectives.
 
-`-d` stores raw HTML (see Gotchas) — build the description as HTML, never markdown. Easiest
-reliable path: write markdown, convert with `npx marked -i desc.md -o desc.html`, then
-`wi create "Title" ... -d "$(cat desc.html)"`. Verify after creating:
-`wi show ABC-1 --no-cache --json | jq -r .description_html` must contain real h2/li tags.
+`--desc-md` accepts native markdown and converts it to HTML client-side — write the description
+in markdown and pass `--desc-md "$(cat desc.md)"` (or `-d` for a short plain-text line). Verify
+after creating: `wi show ABC-1 --no-cache --json | jq -r .description_html` must contain real h2/li tags.
 
 **New tasks: confirm dates and links with the human first.** When creating a work item:
 
@@ -249,9 +248,6 @@ reliable path: write markdown, convert with `npx marked -i desc.md -o desc.html`
 NOTE: `wi create`/`wi update` take `--start-date`/`--target-date` (YYYY-MM-DD) natively;
 the end-date field is `target_date` on the API, and a wrong field name is silently
 ignored — pbot validates the format client-side (exit 5) and verifies the write.
-Relations still go through the API's issue-relations endpoint after confirmation:
-`PATCH /api/v1/workspaces/{ws}/projects/{proj}/issues/{issue-uuid}/` — the issue
-segment is the UUID, never `ABC-123`.
 
 **A progress comment moves the task out of backlog.** Posting a progress update means the task
 is being worked on: set the state to In Progress (or another fitting state — e.g. In Review when
@@ -259,19 +255,19 @@ the work is done and awaiting merge) in the same breath as `comment create`. Nev
 you just updated in Todo/Backlog.
 
 **Only the human closes a task.** Never set Done yourself. A task is complete only when the
-human says so, or when the work is merged onto the `integration/selfhost` line. "I finished my
+human says so, or when the work is merged onto the `integration-main` line. "I finished my
 part and pushed" tops out at In Progress — the same applies when correcting a state you set too
 eagerly.
 
 ## Gotchas
 
-- **Work-item descriptions are HTML.** `wi create` / `wi update -d` store the value verbatim inside
-  the Plane editor's HTML, so markdown renders literally (`##`, backticks). Pass `<h2>`, `<p>`,
-  `<ul>`, `<code>`, `<pre><code>`. From a markdown source, convert first and pass
-  `-d "$(cat body.html)"` — a file beats a huge inline string. Plane prepends a cosmetic empty
-  `<p></p>`. Verify the stored value: `wi show ABC-123 --no-cache --json | jq -r .description_html`
-  must contain real tags; a non-empty description proves nothing, since malformed input is stored
-  happily. Work items only: `intake create -d` HTML-escapes its input, so tags show up as text.
+- **Work-item descriptions are stored as HTML.** `wi create` / `wi update -d` wrap plain text in
+  a paragraph, so markdown or HTML passed to `-d` renders literally (`##`, backticks, `<h2>`). For
+  rich layout use `--desc-md <markdown>` — write the source in markdown and pass
+  `--desc-md "$(cat body.md)"` (a file beats a huge inline string). Verify the stored value:
+  `wi show ABC-123 --no-cache --json | jq -r .description_html` must contain real tags; a non-empty
+  description proves nothing, since malformed input is stored happily. Work items only:
+  `intake create -d` HTML-escapes its input, so tags show up as text.
 - **Confirm a create against the server before retrying it.** `wi create` prints the created item
   as JSON, so a broken `jq` filter over that output looks exactly like a failed create. Check with
   `wi ls -p PROJECT --no-cache --json | jq -r '.[] | select(.parent=="<parent-uuid>") | .sequence_id'`.
@@ -306,16 +302,15 @@ eagerly.
 
 ## Bulk create with rich descriptions
 
-One file per item, convert to HTML, prove the first one renders, then create the rest and count
+One file per item in markdown, prove the first one renders, then create the rest and count
 what landed on the server.
 
 ```bash
-# 1. write one body per item (01.md, 02.md, ...) and convert to HTML
-npx marked -i 01.md -o 01.html          # or any md-to-html converter
+# 1. write one body per item (01.md, 02.md, ...) in markdown
 
 # 2. create the FIRST item and inspect its stored HTML before going further
 pbot wi create "First title" -p "Project" --parent ABC-1 --assign "Name" \
-  --state "Todo" --priority high --labels "bug,backend" -d "$(cat 01.html)" --json
+  --state "Todo" --priority high --labels "bug,backend" --desc-md "$(cat 01.md)" --json
 pbot wi show ABC-2 --no-cache --json | jq -r .description_html   # expect <h2>, <pre>
 
 # 3. create the remaining items, then verify the whole batch by parent

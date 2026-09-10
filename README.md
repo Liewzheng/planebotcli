@@ -1,4 +1,4 @@
-# pbotcli (pbot)
+# planebotcli (pbot)
 
 `pbot` is an independent command-line client for [Plane.so](https://plane.so) (SaaS or
 self-hosted): projects, work items, cycles, modules, documents, labels, states, intake queues,
@@ -8,7 +8,7 @@ Its defining feature is **fuzzy resource resolution**: anywhere a resource is ex
 pass a name, an identifier (`ABC-123`), or a UUID. Close names resolve on their own —
 `pbot wi ls -p "Front"` finds `Frontend`.
 
-This repository is `pbotcli`: a Cargo workspace under `crates/`. The Python implementation that
+This repository is `planebotcli`: a Cargo workspace under `crates/`. The Python implementation that
 used to ship in this repository has been removed; the docs in `docs/` that describe it are kept
 as historical reference.
 

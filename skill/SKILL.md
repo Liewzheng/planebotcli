@@ -39,7 +39,7 @@ default — do not ask first:
 `cargo install --path crates/planebotcli-cli --locked` (run in the integration-main checkout;
 installs both `planebotcli` and `pbot` into `~/.cargo/bin`)
 
-Config precedence: CLI flags > env vars (`PLANE_BASE_URL`, `PLANE_API_KEY`, `PLANE_WORKSPACE`) > `~/.plane_api` (key=value lines, chmod 600). `pbot configure` writes the file interactively.
+Config precedence: CLI flags > env vars (`PLANE_BASE_URL`, `PLANE_API_KEY`, `PLANE_WORKSPACE`) > config file, discovered highest-priority-first from `~/.config/pbot/config.toml` (TOML), `~/.pbot`, `~/.planecli`, then `~/.plane_api` (key=value lines, chmod 600). `pbot configure` writes the active config file (the highest-priority existing one; `~/.plane_api` by default).
 
 For a **self-hosted** instance (base URL is whatever you host it on — an internal IP, a Tailscale address, or a domain):
 

@@ -31,7 +31,9 @@ Update later with the same command from a fresh checkout (`--force` if the versi
 
 ## Configure
 
-`~/.plane_api` holds the credentials as lowercase `key=value` lines:
+Credentials come from environment variables or a config file discovered from
+several locations, highest priority first: `~/.config/pbot/config.toml` (TOML),
+`~/.pbot`, `~/.planecli`, then the legacy `~/.plane_api` (lowercase `key=value` lines):
 
 ```ini
 base_url=https://api.plane.so
@@ -39,9 +41,11 @@ api_key=your-personal-access-token
 workspace=your-workspace-slug
 ```
 
-Write it interactively with `pbot configure` (saved with `chmod 600`), or export
-`PLANE_BASE_URL` / `PLANE_API_KEY` / `PLANE_WORKSPACE` instead. Precedence is
-**flags > environment variables > `~/.plane_api`**, per setting. `base_url` is your instance
+`pbot configure` writes the active config file interactively (the highest-priority
+existing candidate, `~/.plane_api` by default, `chmod 600`); the TOML file
+takes the same keys at the top level or under `[auth]`. Exporting
+`PLANE_BASE_URL` / `PLANE_API_KEY` / `PLANE_WORKSPACE` also works. Precedence is
+**flags > environment variables > config file**, per setting. `base_url` is your instance
 (`https://api.plane.so` for SaaS); `workspace` is the workspace slug, not the instance name.
 
 ## Quick start

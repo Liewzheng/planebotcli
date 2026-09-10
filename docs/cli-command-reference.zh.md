@@ -37,7 +37,7 @@ pbot [全局选项] <命令> [<子命令>] [<参数>...] [选项]
 | `PLANE_API_KEY` | 服务令牌（`plane_api_...`）。 |
 | `PLANE_WORKSPACE` | 工作区 slug（不是实例名）。 |
 
-配置文件 `~/.plane_api`：`key=value` 文本，键为小写 `base_url`、`api_key`、`workspace`，`chmod 600`。优先级：命令行参数 > 环境变量 > `~/.plane_api`。
+配置文件按优先级从多个位置发现（取第一个存在的）：`~/.config/pbot/config.toml`（TOML，顶层 `base_url` / `api_key` / `workspace`，也可放在 `[auth]` 段）、`~/.pbot`、`~/.planecli`，最后是旧的 `~/.plane_api`（`key=value` 文本，键为小写，`chmod 600`）。优先级：命令行参数 > 环境变量 > 配置文件。`pbot configure` 仍写入 `~/.plane_api`。
 
 > 自托管实例若在代理后面，请这样运行，让 CLI 请求直连实例：`env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY -u all_proxy pbot ...`
 
@@ -57,7 +57,7 @@ pbot [全局选项] <命令> [<子命令>] [<参数>...] [选项]
 | 命令 | 用途 |
 |---|---|
 | [`whoami`](#pbot-whoami) | 查看当前登录用户。 |
-| [`configure`](#pbot-configure) | 交互式写入 `~/.plane_api`。 |
+| [`configure`](#pbot-configure) | 交互式写入凭证（到生效的配置文件）。 |
 | [`user`](#pbot-user) | 工作区成员。 |
 | [`cache`](#pbot-cache) | 本地磁盘缓存管理。 |
 | [`project`](#pbot-project) | 项目。 |
@@ -84,7 +84,7 @@ pbot whoami [--json]
 
 ## pbot configure
 
-交互式写入凭证到 `~/.plane_api`（依次提示实例地址、API Key、工作区 slug），随后清空磁盘缓存。
+交互式写入凭证（依次提示实例地址、API Key、工作区 slug），保存到生效的配置文件（优先级最高的已存在候选，默认 `~/.plane_api`），随后清空磁盘缓存。
 
 ```
 pbot configure

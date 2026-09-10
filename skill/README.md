@@ -23,7 +23,7 @@
    # https://github.com/Liewzheng/planebotcli/releases
    ```
 
-2. **配置凭据**，写入 `~/.plane_api`（chmod 600）或导出环境变量：
+2. **配置凭据**，写入任一被发现的位置（按优先级：`~/.config/pbot/config.toml` → `~/.pbot` → `~/.planecli` → `~/.plane_api`）或导出环境变量：
 
    ```bash
    cat > ~/.plane_api <<EOF

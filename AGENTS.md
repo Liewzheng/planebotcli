@@ -78,8 +78,8 @@ small to track" or "too small for a PR" exemption.
    release branch.
 4. **Open a pull request — and stop there.** Push the branch to the `planebotcli` remote and open a
    PR against `integration-main` (`gh pr create --repo Liewzheng/planebotcli --base
-   integration-main`). Never commit a task's work straight onto an integration or release branch,
-   and never merge a PR yourself: merging is the human's call, made after the review gate below.
+   integration-main`). Keep the PR number it prints (`gh pr view --json number -q .number` retrieves
+   it) — the review gate needs it. Merging is the human's call, made after that gate.
 5. **Never merge into a protected branch by hand.** `main`, `master`, and `dev` — on every remote,
    `planebotcli`'s `main` included — accept changes only through a merged PR. No
    `git push <remote> <branch>:main`, no `--force`, no local fast-forward that skips review.
@@ -91,25 +91,35 @@ small to track" or "too small for a PR" exemption.
 No PR is merged until `reng` (the local Rust Code Review Engine) has reviewed it and every finding
 has been answered on the PR.
 
-1. Trigger the review and publish it to the PR as comments:
+1. **Trigger the review and publish it to the PR.** `reng` is usually not on `PATH`:
 
    ```bash
-   ~/.local/bin/reng review \
+   RENG=$(command -v reng || echo ~/.local/bin/reng)
+   "$RENG" review \
      --mr-url "https://github.com/Liewzheng/planebotcli/pull/<n>" \
      --github-token "$(gh auth token)" --publish
    ```
 
-   `reng` is not on `PATH` — call it by absolute path. `--publish` writes the findings as PR
-   comments and leaves the full report under `~/.config/review-engine/reports/`. The GitHub token
-   comes from `gh auth token` (scope `repo`).
-2. **Wait 5 minutes after triggering before reading anything.** Answering a half-published review
-   wastes a round trip.
-3. Read every comment: `gh pr view <n> --repo Liewzheng/planebotcli --comments`.
+   The GitHub token comes from `gh auth token` (scope `repo`); `--publish` also leaves the full JSON
+   report under `~/.config/review-engine/reports/`. On GitHub the report is posted as a **PR review
+   body**, so read it with
+   `gh api repos/Liewzheng/planebotcli/pulls/<n>/reviews -q '.[0].body'` — `gh pr view --comments`
+   fails on this repo with a GraphQL Projects-classic deprecation error.
+2. **Wait 5 minutes after triggering before reading anything.** This pause is the maintainer's
+   requirement, not a guess at how long `reng` takes (`reng review` blocks until the review is
+   published, so the wait is a deliberate cooling-off window).
+3. **A failed or empty publish is not a pass.** `--publish` can exit non-zero with `inline notes`
+   while the report *was* published — check the PR before re-running, since a re-run posts a second
+   copy. But if `reng` did not run, died before publishing, or the PR carries no report at all, stop:
+   report the failure on the PR and to the human, and do not ask for a merge.
 4. **Triage every finding and reply to it on the PR — none may be left unanswered.**
    - **real bug or good suggestion** → fix it on the same branch, push, and reply with what changed;
+   - **needs a human decision, or a change too large for this branch** → reply saying so and carry it
+     into the merge request; never drop it silently;
    - **false positive** → reply with the evidence that refutes it (`file:line`, project context,
-     history). `reng` is an LLM reviewer that does not know this codebase and over-reports, so
-     triage rather than comply blindly — the `reng-mr-review` skill lists its known failure modes.
+     history). `reng` is an LLM reviewer that does not know this codebase and over-reports, so triage
+     rather than comply blindly — check the `reng-mr-review` skill's list of known failure modes
+     before calling a finding a false positive.
 5. **Then ask the human to merge**, reporting the PR URL, every finding, and how each was handled.
    The human merges; the agent does not. The Plane item goes to `Done` only after that merge lands on
    `main`.
@@ -128,9 +138,10 @@ fork PR branches.
 - Append a Keep a Changelog section to `CHANGELOG.md` in upstream style, without internal tracker IDs.
 - Cut a release by committing `release: <version>` on `integration-main`, pushing that branch, and
   opening a PR from `integration-main` into the planebotcli remote's `main`:
-  `gh pr create --repo Liewzheng/planebotcli --base main --head integration-main`. That PR goes
-  through the same review gate, and the **human merges it** — the released line never takes a direct
-  push and the agent never merges (see Task workflow).
+  `gh pr create --repo Liewzheng/planebotcli --base main --head integration-main`. A release PR goes
+  through the full review gate — the same `reng` run, the same 5-minute wait, the same per-finding
+  replies, no shortcut for docs or version bumps — and the **human merges it**. The released line
+  never takes a direct push and the agent never merges (see Task workflow).
 - After cutting a release, reinstall the local CLI from the merged `integration-main` checkout by
   default (no need to ask first): `cargo install --path crates/planebotcli-cli --locked`
   (installs both `planebotcli` and the `pbot` alias into `~/.cargo/bin`).

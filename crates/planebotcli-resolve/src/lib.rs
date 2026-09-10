@@ -121,7 +121,7 @@ pub async fn resolve_project(query: &str, client: &PlaneClient) -> Result<Projec
                 .or(p.identifier.as_deref())
                 .unwrap_or_default();
             eprintln!(
-                "warning: no exact project named or identified '{query}'; matched '{shown}' by fuzzy name — use the exact name or identifier to avoid landing on the wrong project",
+                "warning: no exact project named or identified '{query}'; matched '{shown}' — pass the exact name or identifier to target it precisely",
             );
             Ok(p)
         }

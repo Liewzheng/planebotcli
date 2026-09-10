@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.0.4] - 2026-09-10
+
+### Fixed
+- `doc create` / `doc update` with `--content-md` now parse markdown blocks
+  line by line instead of by blank-line chunks: a heading followed by a list
+  (or a paragraph followed by a table) no longer renders as one literal
+  paragraph. Added GitHub-style tables, blockquotes (`>`) and horizontal
+  rules; tilde fences (`~~~`) are accepted alongside backticks. Inline
+  conversion (code spans, bold/italic, links) is unchanged.
+
 ## [1.0.3] - 2026-09-09
 
 ### Added

@@ -4,7 +4,7 @@
 projects, work items, cycles, modules, documents, labels, states, intake queues, and comments. Its
 defining feature is **fuzzy resource resolution** — any resource can be referenced by name,
 identifier (`ABC-123`), or UUID. It is a Rust workspace under `crates/`; the Python implementation in
-`src/planecli` is a frozen legacy line kept for history.
+`src/planecli` is a frozen legacy line — bug fixes only, no new features — kept for history.
 
 ## Identity
 
@@ -185,8 +185,9 @@ The repository `github.com/Liewzheng/planebotcli` holds two long-lived branches:
 (the integration line where completed tasks accumulate) and `main` (the released line, which only
 advances through a PR from `integration-main`). Since **1.0.0 (2026-09-09) the CLI is the Rust line**
 (`planebotcli` / `pbot`, a Cargo workspace in `crates/`); the Python line in `src/planecli` is frozen
-and kept for history. Version and changelog are managed by the agent on `integration-main` only —
-this repository is the project's only home (see Identity).
+— bug fixes only, no new features — and kept for history. The version and the changelog are edited on
+`integration-main`, the branch tasks land on; there is no second repository they could be edited in
+(see Identity).
 
 - Keep SemVer: bump the minor for new commands/flags, the patch for bug fixes. The single version
   lives in the workspace root `Cargo.toml` (`[workspace.package] version`).

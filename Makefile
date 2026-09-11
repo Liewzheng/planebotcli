@@ -1,69 +1,69 @@
 .DEFAULT_GOAL := help
 
-.PHONY: help install install-tool sync test test-v lint lint-fix format check build clean run
+.PHONY: help install build run test test-v lint format check e2e clean
 
 # ──────────────────────────────────────────────
 # Setup
 # ──────────────────────────────────────────────
 
-install: ## Install dependencies (dev environment)
-	@echo "install - Install dependencies (dev environment)"
-	uv sync
+install: ## Install the CLI locally (pbot + planebotcli into ~/.cargo/bin)
+	@echo "install - Install the CLI locally"
 
-install-tool: ## Install CLI system-wide (editable)
-	@echo "install-tool - Install CLI system-wide (editable)"
-	uv tool install -e .
+	cargo install --path crates/planebotcli-cli --locked
 
-sync: install ## Alias for install
+build: ## Build the workspace (debug)
+	@echo "build - Build the workspace"
+
+	cargo build --workspace
 
 # ──────────────────────────────────────────────
 # Development
 # ──────────────────────────────────────────────
 
-run: ## Run the CLI (pass ARGS="--help" for options)
+run: ## Run the CLI (pass ARGS="wi ls -p Frontend")
 	@echo "run - Run the CLI"
-	uv run planecli $(ARGS)
+
+	cargo run --quiet --bin pbot -- $(ARGS)
 
 # ──────────────────────────────────────────────
 # Quality
 # ──────────────────────────────────────────────
 
-test: ## Run tests
-	@echo "test - Run all tests"
-	uv run pytest tests/
+test: ## Run the workspace test suite
+	@echo "test - Run the workspace tests"
 
-test-v: ## Run tests (verbose)
-	@echo "test-v - Run all tests (verbose)"
-	uv run pytest tests/ -v
+	cargo test --workspace
 
-lint: ## Run linter
-	@echo "lint - Run linter using ruff"
-	uv run ruff check src/
+test-v: ## Run the workspace tests, showing test output
+	@echo "test-v - Run the workspace tests (verbose)"
 
-lint-fix: ## Run linter with auto-fix
-	@echo "lint-fix - Run linter with auto-fix"
-	uv run ruff check --fix src/
+	cargo test --workspace -- --nocapture
 
-format: ## Format code using ruff formatter
-	@echo "format - Format code using ruff formatter"
-	uv run ruff format src/ tests/
+lint: ## Run clippy with warnings as errors
+	@echo "lint - Run clippy with warnings as errors"
+
+	cargo clippy --workspace --all-targets -- -D warnings
+
+format: ## Format the workspace with rustfmt
+	@echo "format - Format the workspace"
+
+	cargo fmt --all
 
 check: lint test ## Run lint + tests
 
 # ──────────────────────────────────────────────
-# Build & Clean
+# End-to-end & clean
 # ──────────────────────────────────────────────
 
-build: ## Build distribution packages
-	@echo "build - Build distribution packages"
-	uv build
+e2e: ## Run the live smoke test (needs ~/.plane_api; pass ARGS="-p PROJECT")
+	@echo "e2e - Run the live smoke test"
 
-clean: ## Remove build artifacts and caches
-	@echo "clean - Remove build artifacts and caches"
-	rm -rf dist/ build/ *.egg-info
-	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name .pytest_cache -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name .ruff_cache -exec rm -rf {} + 2>/dev/null || true
+	scripts/e2e.sh $(ARGS)
+
+clean: ## Remove build artifacts
+	@echo "clean - Remove build artifacts"
+
+	cargo clean
 
 # ──────────────────────────────────────────────
 # Help
@@ -71,5 +71,5 @@ clean: ## Remove build artifacts and caches
 
 help: ## Show available commands
 	@echo "Available commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'

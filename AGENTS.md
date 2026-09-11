@@ -1,6 +1,24 @@
-# PlaneCLI
+# planebotcli (pbot)
 
-A Python CLI for [Plane.so](https://plane.so) (SaaS or self-hosted) that manages projects, work items, cycles, modules, documents, labels, states, intake queues, and comments. Its defining feature is **fuzzy resource resolution**: any resource can be referenced by name, identifier (`ABC-123`), or UUID. Built with cyclopts, Rich, rapidfuzz, cashews, and the official `plane-sdk`.
+`pbot` is an independent command-line client for [Plane.so](https://plane.so) (SaaS or self-hosted):
+projects, work items, cycles, modules, documents, labels, states, intake queues, comments, and
+attachments. Its defining feature is **fuzzy resource resolution** — any resource can be referenced
+by name, identifier (`ABC-123`), or UUID. It is a Rust workspace under `crates/`; the Python
+implementation it replaced has been removed, and the documents that describe it are kept as history.
+
+## Identity
+
+This project is **not a fork, a port, or a downstream of `plane-cli`**, and `plane-cli` is not its
+upstream. `pbot` began from that codebase and has since evolved on its own; the two have no
+relationship to maintain.
+
+- The only home is `github.com/Liewzheng/planebotcli`. There is nowhere to sync from and nobody to
+  send pull requests to.
+- Do not reintroduce the vocabulary of a fork: no "upstream", no "syncing with upstream", no PRs
+  against another repository, no mirroring branches back and forth.
+- Historical references (`plane-cli`, the Python line, the ADRs written for it) stay as history and
+  as provenance; they are not a live dependency or a source of incoming changes.
+- New work is judged on its own merits — what `pbot` should be — not on parity with `plane-cli`.
 
 ## Language
 
@@ -8,58 +26,114 @@ All docs, comments, and commit messages in English.
 
 ## Commands
 
-Everything runs through `uv`; common tasks are wrapped in the Makefile.
+Everything runs through `cargo`; common tasks are wrapped in the Makefile.
 
 ```bash
-make install                       # uv sync (dev environment)
-make test                          # uv run pytest tests/
-make lint                          # ruff check src/
-make lint-fix                      # ruff check --fix src/
-make format                        # ruff format src/ tests/
+make install                       # cargo install the CLI locally (pbot + planebotcli)
+make build                         # cargo build --workspace
+make test                          # cargo test --workspace
+make test-v                        # the same, showing test output (--nocapture)
+make lint                          # cargo clippy --workspace --all-targets -- -D warnings
+make format                        # cargo fmt --all
 make check                         # lint + test — run before committing
-make run ARGS="wi ls -p Frontend"  # run the CLI
+make run ARGS="wi ls -p Frontend"  # run the CLI (cargo run --bin pbot)
+make e2e                           # scripts/e2e.sh — live smoke test against a real instance
 ```
 
-Single test: `uv run pytest tests/test_resolve.py::test_name -v`. Line length 100, Python >= 3.11, ruff selects `E, F, I, W`.
+Single test: `cargo test --workspace <name>` (e.g. `cargo test -p planebotcli-resolve resolve_project`),
+or `cargo run --bin pbot -- wi ls` for the CLI without installing it. Edition 2024, rustfmt
+defaults, clippy clean at `-D warnings`.
 
 ## Structure
 
 ```
-src/planecli/
-  app.py           # Root cyclopts App; main() entry point; sub-app registration
-  commands/        # One module per resource (list/show/create/update/delete). New features go here.
-  utils/resolve.py # Resolution layer: resolve_<x>/resolve_<x>_async (UUID → identifier → fuzzy name)
-  utils/fuzzy.py   # rapidfuzz token_sort_ratio, threshold 60
-  api/             # client.py (PlaneClient singleton); async_sdk.py (async wrapper)
-  cache.py         # cashews disk cache; one cached_list_<x> per resource
-  formatters/      # output() / output_single() — table to stderr, JSON to stdout
-  exceptions.py    # PlaneCLIError subclasses with message/hint/exit_code
+crates/
+  planebotcli-core       # Config (precedence: flags > env > config file, discovered from ~/.config/pbot/config.toml, ~/.pbot, ~/.planecli, ~/.plane_api), PlaneError + exit codes
+  planebotcli-types      # serde DTOs for every API resource, plus the *Write request bodies
+  planebotcli-cache      # TTL disk cache: one JSON file per key, invalidate by key prefix
+  planebotcli-client     # reqwest async client for the Plane v1 API: X-Api-Key, cursor pagination,
+                         # retry, HTTP→PlaneError mapping, attachment upload, cache wiring
+  planebotcli-resolve    # fuzzy matching (rapidfuzz, threshold 60), resolve_<resource> helpers
+  planebotcli-html       # plain text / markdown subset → HTML, linkify, strip_html_tags
+  planebotcli-format     # output_json (stdout) / output_table (stderr)
+  planebotcli-cli        # clap command tree and handlers (lib.rs), JSON/table views (render.rs)
 ```
 
-Request flow: **command → resolve → async SDK wrapper → (cache | Plane SDK) → formatter**. See [docs/architecture.md](docs/architecture.md).
+`planebotcli-cli` builds both binaries — `planebotcli` (`src/main.rs`) and `pbot`
+(`src/bin/pbot.rs`); each is a thin `Cli::parse()` → `planebotcli_cli::run` wrapper. Request flow:
+**clap command → resolve → client (cache | HTTP) → render view → format**. Top level: `crates/`
+(the workspace), `docs/` (the CLI command reference, the Plane API reference, and the historical
+Python-era documents), `skill/` (the agent skill), `scripts/e2e.sh`.
 
 ## Conventions
 
-- **Never call the sync Plane SDK directly from a command.** Wrap single calls in `run_sdk(fn, *args)` and paginated lists in `paginate_all_async(list_fn, ...)`. For concurrent batches use `create_client()` (a fresh client per thread — don't share the singleton's `requests.Session`). See [ADR-0001](docs/adr/0001-async-wrapper-over-sync-sdk.md).
-- **Reads go through the cache layer.** Resolvers and list commands call `cached_list_<x>(...)`, which returns **plain dicts** (not Pydantic models). After any create/update/delete, call `await invalidate_resource("<resource>", workspace, project_id)`. See [ADR-0004](docs/adr/0004-disk-cache-ttls-and-keys.md).
-- **Error handling.** Wrap SDK calls in `try/except PlaneError` and `raise handle_api_error(e)`. Raise `ValidationError`/`ResourceNotFoundError` for user-facing problems. Exit codes: Auth=2, NotFound=3, API=4, Validation=5.
-- **`--json` flag.** Every read/mutate command takes `json: bool = False` and passes `as_json=json` to the formatter. Table output stays on **stderr** so `--json 2>/dev/null` yields clean JSON. See [ADR-0005](docs/adr/0005-dual-output-contract.md).
-- **Lazy imports.** Import SDK models and cache helpers *inside* the command function to keep CLI startup fast (sub-app registration in `app.py` uses `# noqa: E402` deliberately).
-- **cyclopts idioms.** Sub-apps declare aliases via `name=["module", "modules"]`; subcommands via `@app.command(name="list", alias="ls")`; short flags via `Annotated[str, Parameter(alias="-p")]`. Numpydoc parameter docstrings become `--help` text.
+- **Commands are clap subcommands.** The tree is the `Cli`/`Command` enums in
+  `crates/planebotcli-cli/src/lib.rs`; each handler is a `cmd_*` function taking `&PlaneClient` and
+  `json: bool`, dispatched from the `match` in `run`. Aliases go on the variant
+  (`#[command(alias = "ls")]`, `visible_alias = "issues"`), short flags via `#[arg(long, short = 'p')]`,
+  and doc comments on variants and fields are the `--help` text.
+- **All HTTP goes through `PlaneClient`** (`crates/planebotcli-client`). A handler never calls
+  `reqwest` itself: the client owns the `X-Api-Key` header, the `/api/v1` prefix, cursor pagination
+  (`paginate`), retry on 429/5xx (5 attempts, linear backoff) and the HTTP→`PlaneError` mapping
+  (`map_api_error`).
+- **Reads go through the cache layer.** The client's list methods (`list_projects`, `list_states`, …)
+  serve from the TTL disk cache and refresh it; every create/update/delete calls
+  `self.invalidate("<resource>:{workspace}[:{project_id}]")` on the way out. The TTLs are the
+  `TTL_*` constants at the top of `planebotcli-client/src/lib.rs`; the global `--no-cache` flag is
+  threaded into `PlaneClient::with_cache` and disables both halves. See
+  [ADR-0004](docs/adr/0004-disk-cache-ttls-and-keys.md) (historical).
+- **Errors are typed, and the type carries the exit code.** Return `PlaneError` from
+  `planebotcli-core`: `Auth`=2, `NotFound`=3, `Api`=4, `Validation`=5, `Other`=1. `main.rs` prints
+  `Error: …`, then `Hint: …` when the variant has one, and exits with `err.exit_code()`. Build
+  user-facing failures with `PlaneError::validation(...)` / `validation_with_hint(...)`, and make the
+  hint name the next command to run.
+- **Dual output contract.** `--json` is a global flag; `output_json` writes to stdout, `output_table`
+  to stderr, so `--json 2>/dev/null` yields clean JSON. The JSON shape is the `serde_json::Value`
+  views built in `render.rs`, so its keys are part of the contract. See
+  [ADR-0005](docs/adr/0005-dual-output-contract.md) (historical).
+- **Views live in `render.rs`.** `work_item_view` and friends resolve UUIDs to names through the
+  `Lookups` maps (states, labels, members) and add the composed `sequence_id`,
+  `description_stripped`, and `web_url`. Enrichment that fails degrades to `null`; it never aborts
+  the command. See [ADR-0006](docs/adr/0006-secondary-enrichment-degrades-to-null.md) (historical).
+- **Request bodies are `*Write` structs** whose `None` fields are stripped by the client, so an
+  unset `Option` means "leave this alone". A PATCH that must send an explicit `null` (clearing a
+  parent) goes through the client's raw-value path instead. Validate client-side before writing, and
+  read the field back where the API can silently ignore it. See
+  [ADR-0007](docs/adr/0007-verify-writes-the-api-can-silently-ignore.md) (historical).
 
 ## Gotchas
 
-- **`--verbose`/`-v` and `--no-cache` are stripped from `sys.argv` in `main()` before cyclopts parses** — cyclopts does not own them. Add new global flags the same way.
-- **SDK model mismatches require escape hatches** (see [ADR-0003](docs/adr/0003-sdk-escape-hatches.md)):
-  - Work items: `WorkItemDetail` validation fails because the API returns `assignees`/`labels` as UUID strings. Resolvers use raw `client.work_items._get(path)` to get a dict directly. Each site has a `NOTE:` comment.
-  - Documents (Pages): SDK support is incomplete; `commands/documents.py` calls the HTTP API directly with `requests` + `X-Api-Key` via `run_sdk(requests.get, ...)`.
-  - Estimate points: no API endpoint; `cached_list_estimate_points` derives them from work items with `expand=estimate_point`.
-- **A `200` is not always a write.** Some Plane endpoints accept a mutation and ignore it — the intake `PATCH` returns `200` with the record unchanged when the caller is not a project Admin. Where that is known, read the raw response and compare the field you meant to change *before* enriching it for display, then raise `APIError`. See [ADR-0007](docs/adr/0007-verify-writes-the-api-can-silently-ignore.md).
-- **Intake mutations take the work item UUID**, not the intake wrapper `id` — the `Issue ID` column of `intake ls`. `intake delete` also deletes the underlying work item for any status other than `accepted`; destructive commands are documented, never prompted (see [ADR-0008](docs/adr/0008-destructive-deletes-are-documented-not-prompted.md)).
-- **Guard optional flags with `is not None`, not truthiness.** `--priority ""` must reach the validator and be rejected; `if priority:` would silently fall back to the default.
-- **Docstrings are `--help` text, so literal angle brackets vanish.** cyclopts/Rich renders them as markup — write "a paragraph tag", not `<p>`.
-- **Reference versioned docs, not tracker issues.** Do not cite Plane/Linear issue IDs or external tracker URLs in code comments — they are unreachable after delivery. Point to an ADR or guide instead.
-- **Tests never hit a real Plane instance.** `conftest.py` autouses a `mem://` cache backend and provides a `mock_plane_client` fixture. Mock the SDK/resolvers; prefer testing pure logic (normalizers, fuzzy matching, resolution) directly.
+- **A `200` is not always a write.** Plane accepts some mutations and ignores them: the intake
+  `PATCH` returns `200` with the record unchanged for a non-Admin, and a misspelled field is
+  swallowed the same way. Where that is known the CLI verifies by read-back — the intake status, an
+  updated date (`lib.rs`, the `wi update` date check), an attachment's `is_uploaded`, a relation
+  POST — and raises `PlaneError::Api` when the server did not record the change. `relations remove`
+  exists only to report that the API has no DELETE endpoint for a relation. See
+  [ADR-0007](docs/adr/0007-verify-writes-the-api-can-silently-ignore.md).
+- **Intake mutations take the work item UUID**, not the intake wrapper `id` — the `Issue ID` column
+  of `intake ls`. `intake delete` also deletes the underlying work item for any status other than
+  `accepted`.
+- **Optional flags are `Option<T>`: test with `is_some()`, not emptiness.** `wi update --labels ""`
+  must send an empty label list, so the code checks `opts.labels.is_some()` (and `clear_labels`)
+  rather than `!labels.is_empty()`, which would skip the field and leave the labels untouched.
+- **Destructive commands are documented, not prompted.** No delete asks on stdin; the only
+  interactive command is `configure`. A duplicate attachment name is refused with a validation error
+  and a hint to pass `--force`, never confirmed. See
+  [ADR-0008](docs/adr/0008-destructive-deletes-are-documented-not-prompted.md).
+- **The API's own shapes leak, so a few fields are `serde_json::Value`.** Work-item `state`,
+  `labels`, and `assignees` come back as raw UUID strings from the detail endpoint and as UUID lists
+  or objects from the list endpoints; `planebotcli-types` keeps those polymorphic fields as `Value`
+  and `render.rs` interprets them. Pages use `PageScope` for the two locations (workspace vs
+  project), archiving must set `archived_at`, and estimate points have no endpoint at all — they are
+  derived from work items with `expand=estimate_point`.
+- **Reference versioned docs, not tracker issues.** Do not cite Plane/Linear issue IDs or external
+  tracker URLs in code comments — they are unreachable after delivery. Point to an ADR or guide
+  instead.
+- **Tests never hit a real Plane instance.** Unit tests sit next to the code, and
+  `crates/planebotcli-cli/tests/mock_e2e.rs` runs the real binary against a mockito server, pinning
+  the `--json` contract and exit codes. Mock the HTTP layer (`mockito`, a `dev-dependency`), and
+  prefer testing pure logic (normalizers, fuzzy matching, HTML conversion) directly. The mock e2e
+  strips proxy variables from the child environment so local traffic is not hijacked.
 
 ## Task workflow
 
@@ -74,7 +148,7 @@ small to track" or "too small for a PR" exemption.
    and at merge. Set the state to match reality: `In Progress` once work begins, `Done` only after
    the merge is on `main`. A finished change with no comment on its item is not done.
 3. **Branch per task**, off `integration-main`, named `<type>/<task>-<slug>` (e.g.
-   `feat/planecli-42-relations-remove`). Never commit a task's work straight onto an integration or
+   `feat/PLANECLI-42-relations-remove`). Never commit a task's work straight onto an integration or
    release branch.
 4. **Open a pull request — and stop there.** Push the branch to the `planebotcli` remote and open a
    PR against `integration-main` (`gh pr create --repo Liewzheng/planebotcli --base
@@ -85,6 +159,13 @@ small to track" or "too small for a PR" exemption.
    `git push <remote> <branch>:main`, no `--force`, no local fast-forward that skips review.
 6. **Resync after every merge** — `git fetch planebotcli` and fast-forward `integration-main` — so
    the next task branch starts from the merged state.
+7. **Record the change in `CHANGELOG.md` in the same PR.** Every change gets a Keep a Changelog
+   entry under `## [Unreleased]` — code, docs, and repository process alike, no exemptions. A change
+   that is reverted before release is edited out of its entry rather than answered by a second one.
+   Write it in the file's existing voice, one or two sentences: a CLI change names the command and
+   flag, a repository-process change says what the process now is, and neither restates what
+   `AGENTS.md` already explains in full. Keep internal tracker IDs out (the Plane item is the trace,
+   the changelog is for readers).
 
 ### Review gate
 
@@ -156,16 +237,20 @@ unauthenticated, stop and say so rather than driving the API by hand.
 
 ## Release management
 
-The release repo `github.com/Liewzheng/planebotcli` holds two long-lived branches: `integration-main`
+The repository `github.com/Liewzheng/planebotcli` holds two long-lived branches: `integration-main`
 (the integration line where completed tasks accumulate) and `main` (the released line, which only
-advances through a PR from `integration-main`). Since **1.0.0 (2026-09-09) the CLI is the Rust rewrite** (`planebotcli` /
-`pbot`, a Cargo workspace in `crates/`); the Python line is frozen to bug fixes. Version and
-changelog are managed by the agent on `integration-main` only — never on upstream `main` or the
-fork PR branches.
+advances through a PR from `integration-main`). Since **1.0.0 (2026-09-09) the CLI is the Rust line**
+(`planebotcli` / `pbot`, a Cargo workspace in `crates/`), and the Python line it replaced has since
+been removed. The version and the changelog are edited on
+`integration-main`, the branch tasks land on; there is no second repository they could be edited in
+(see Identity).
 
 - Keep SemVer: bump the minor for new commands/flags, the patch for bug fixes. The single version
   lives in the workspace root `Cargo.toml` (`[workspace.package] version`).
-- Append a Keep a Changelog section to `CHANGELOG.md` in upstream style, without internal tracker IDs.
+- Entries accumulate under `## [Unreleased]` as each change lands (see Task workflow rule 7) —
+  never batched in at release time, when nobody remembers what shipped. Cut a release by renaming
+  that section to `## [<version>] - YYYY-MM-DD`, in the file's existing Keep a Changelog style and
+  without internal tracker IDs.
 - Cut a release by committing `release: <version>` on `integration-main`, pushing that branch, and
   opening a PR from `integration-main` into the planebotcli remote's `main`:
   `gh pr create --repo Liewzheng/planebotcli --base main --head integration-main`. A release PR goes
@@ -185,6 +270,7 @@ fork PR branches.
 
 ## Key docs
 
-- [Architecture](docs/architecture.md) — layers and request flow
-- [Caching](docs/caching.md) — TTLs, keys, invalidation
-- [ADRs](docs/adr/) — the decisions behind the design
+- [CLI command reference](docs/cli-command-reference.md) — every command, flag, and alias (current)
+- [Plane v1 API reference](docs/api/plane-v1-api.md) — the endpoints the CLI calls (current)
+- [Architecture](docs/architecture.md), [Caching](docs/caching.md), [ADRs](docs/adr/) — historical:
+  the layers, TTLs, and decisions of the Python implementation that has been removed

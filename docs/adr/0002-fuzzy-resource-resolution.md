@@ -1,10 +1,14 @@
 ---
 status: accepted
 date: 2026-07-03
-decision-makers: PlaneCLI maintainers
+decision-makers: planebotcli maintainers
 ---
 
 # ADR-0002: Fuzzy resource resolution (UUID → identifier → name)
+
+> **Historical reference.** This ADR records a decision made for the Python implementation
+> that has since been removed from this repository. It is kept for history; the current CLI is
+> the Rust line under `crates/`.
 
 ## Context and Problem Statement
 

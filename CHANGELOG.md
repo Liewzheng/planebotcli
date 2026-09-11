@@ -5,6 +5,81 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- A `CHANGELOG.md` entry is required for every change, written in the same pull
+  request that makes it, under this section (`AGENTS.md` rule 7).
+- Credentials can now come from a config file discovered from several locations,
+  highest priority first: `~/.config/pbot/config.toml` (TOML with top-level
+  `base_url` / `api_key` / `workspace`, optionally under `[auth]`), `~/.pbot`,
+  `~/.planecli`, then the legacy `~/.plane_api`. `pbot configure` writes the active
+  config file (highest-priority existing candidate, `~/.plane_api` by default);
+  precedence stays CLI flags > env vars > config file.
+
+### Fixed
+- **Behaviour change**: project resolution now prefers exact identifiers and names
+  (case-insensitive) over fuzzy name matches, and prints a warning when only a fuzzy
+  match exists — `project show RENG` can no longer land on a different project
+  (Sirena) by name. `wi create --parent` therefore resolves parents within the right
+  project again.
+- `--labels` now matches strictly: a missing label errors with the available list
+  instead of silently applying the closest one (e.g. `release-0.10.9` → `release-0.10.6`).
+  States keep exact-name priority with a fuzzy fall-back.
+- `wi search` failed against Plane 1.4+ because the search endpoint returns an
+  `{"issues": [...]}` envelope (older builds return a bare array) and the CLI sent
+  the wrong `query` parameter, which the server ignores (empty results). It now
+  sends `search` / `limit`, unpacks both response shapes, supports `-p <project>`
+  (mapped to `project_id` + `workspace_search=false`), and derives the displayed
+  identifier from the search payload's `project__identifier` field.
+- API error messages for undecodable responses now include the HTTP status code
+  and the start of the response body, so a shape mismatch is distinguishable from
+  an HTTP failure.
+- Repository workflow conventions (`AGENTS.md`): every change is tracked by a
+  work item, branched off `integration-main`, and landed through a pull request;
+  `main`, `master`, and `dev` take no direct merges.
+- A `reng` review gate on pull requests: the report is published to the PR, read
+  no earlier than five minutes later, and every finding is answered before the
+  merge is requested.
+- A Chinese edition of the CLI command reference,
+  `docs/cli-command-reference.zh.md`, alongside the English one.
+
+### Changed
+- The maintainer merges pull requests; the agent that opened one no longer does.
+- The CLI is documented as an independent distribution: changes land on the
+  `integration-main` line and are never opened as issues or pull requests against
+  Plane upstream. The skill's comment format and gotchas describe this build rather than
+  an upstream one.
+- Release notes accumulate under `## [Unreleased]` as changes land. A release
+  renames that section to `## [<version>] - YYYY-MM-DD`, instead of reconstructing
+  the entries at release time.
+- The CLI command reference was rewritten for the Rust line, covering all 58
+  subcommands; the previous one still described the 0.7.0 Python line.
+- The project's identity is stated explicitly: `planebotcli` / `pbot` is an
+  independent client for Plane, not a fork or downstream of `plane-cli`, and it
+  has no upstream to sync with.
+- The build and development toolchain is cargo: the Makefile targets (`install`,
+  `build`, `run`, `test`, `test-v`, `lint`, `format`, `check`, `e2e`, `clean`)
+  wrap cargo, clippy, rustfmt, and `scripts/e2e.sh` instead of uv, pytest, and
+  ruff.
+- The project is named `planebotcli` (the repository, the workspace crates, and the
+  installed binary); `pbot` is the short call name used in every example.
+- The stale descriptions left by the rename were cleaned up: the skill now matches the
+  Rust line's behaviour (`-d` wraps plain text, `--desc-md` is the markdown path,
+  `relations` is a first-class command group, and the long-lived branches are
+  `integration-main` / `main`); the `pbotcli` spelling was dropped in favour of
+  `planebotcli` everywhere; the GitHub repository description no longer calls the
+  project a fork of `plane-cli`.
+
+### Removed
+- The Python implementation was removed — its source package, tests,
+  `pyproject.toml`, and `uv.lock` — leaving the Rust line under `crates/` as the
+  only implementation; the `skills/` directory, the older skill that drove the
+  Python binary, went with it.
+- The documents that describe the Python implementation
+  (`docs/architecture.md`, `docs/caching.md`, the ADRs, `docs/rust-rewrite.md`)
+  are kept, each marked as historical reference rather than current behaviour.
+
 ## [1.1.0] - 2026-09-10
 
 ### Added

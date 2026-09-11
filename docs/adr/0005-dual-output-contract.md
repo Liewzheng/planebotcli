@@ -1,14 +1,18 @@
 ---
 status: accepted
 date: 2026-07-03
-decision-makers: PlaneCLI maintainers
+decision-makers: planebotcli maintainers
 ---
 
 # ADR-0005: Dual output contract (table → stderr, JSON → stdout)
 
+> **Historical reference.** This ADR records a decision made for the Python implementation
+> that has since been removed from this repository. It is kept for history; the current CLI is
+> the Rust line under `crates/`.
+
 ## Context and Problem Statement
 
-PlaneCLI serves two audiences at once: a human reading a terminal, who wants colored, aligned tables, and a script piping output into `jq`, which wants clean JSON on stdout and nothing else. If human-readable tables and machine-readable JSON share the same stream, a script cannot reliably parse the output, and a human running with `--json` sees raw JSON with no context. We need one predictable rule that satisfies both without a mode flag on every read.
+pbotcli serves two audiences at once: a human reading a terminal, who wants colored, aligned tables, and a script piping output into `jq`, which wants clean JSON on stdout and nothing else. If human-readable tables and machine-readable JSON share the same stream, a script cannot reliably parse the output, and a human running with `--json` sees raw JSON with no context. We need one predictable rule that satisfies both without a mode flag on every read.
 
 ## Considered Options
 
@@ -24,14 +28,14 @@ The contract:
 
 - The default output is a Rich table, written to **stderr** via the formatters in `formatters/` (`output()` for lists, `output_single()` for records).
 - Every read/mutate command accepts `json: bool = False` and passes `as_json=json` to the formatter. When `--json` is set, structured JSON is written to **stdout**.
-- Because the table is on stderr, `planecli wi ls -p Frontend --json 2>/dev/null | jq …` yields exactly the JSON, nothing else.
+- Because the table is on stderr, `pbot wi ls -p Frontend --json 2>/dev/null | jq …` yields exactly the JSON, nothing else.
 
 **Global flags are stripped before parsing.** Two flags are not owned by cyclopts and are handled in `app.py::main()` by editing `sys.argv` *before* `app()` runs:
 
 - `--verbose` / `-v` — raises log verbosity (logs also go to stderr, keeping stdout clean).
 - `--no-cache` — bypasses cache reads for the invocation (see [ADR-0004](0004-disk-cache-ttls-and-keys.md)).
 
-Errors follow the same discipline: `PlaneCLIError` is caught in `main()` and printed to stderr with a hint, and the process exits with the error's `exit_code` (Auth=2, NotFound=3, API=4, Validation=5).
+Errors follow the same discipline: `PbotcliError` is caught in `main()` and printed to stderr with a hint, and the process exits with the error's `exit_code` (Auth=2, NotFound=3, API=4, Validation=5).
 
 ### Pros and Cons of the Options
 

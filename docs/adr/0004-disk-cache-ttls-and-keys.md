@@ -1,10 +1,14 @@
 ---
 status: accepted
 date: 2026-07-03
-decision-makers: PlaneCLI maintainers
+decision-makers: planebotcli maintainers
 ---
 
 # ADR-0004: Disk cache with volatility-based TTLs and instance-scoped keys
+
+> **Historical reference.** This ADR records a decision made for the Python implementation
+> that has since been removed from this repository. It is kept for history; the current CLI is
+> the Rust line under `crates/`.
 
 ## Context and Problem Statement
 
@@ -20,7 +24,7 @@ Fuzzy resolution ([ADR-0002](0002-fuzzy-resource-resolution.md)) means that most
 
 Chosen option: **A**, because the CLI is invoked as many short-lived processes, so caching must survive across invocations (rules out B), and correctness demands both freshness tiers and instance isolation.
 
-Implemented in `cache.py` with [cashews](https://github.com/Krukov/cashews) over a SQLite-backed disk store, capped at **100 MB** with LRU eviction. The cache directory is platform-appropriate (`~/Library/Caches/planecli` on macOS; `$XDG_CACHE_HOME/planecli` or `~/.cache/planecli` on Linux).
+Implemented in `cache.py` with [cashews](https://github.com/Krukov/cashews) over a SQLite-backed disk store, capped at **100 MB** with LRU eviction. The cache directory is platform-appropriate (`~/Library/Caches/pbotcli` on macOS; `$XDG_CACHE_HOME/pbotcli` or `~/.cache/pbotcli` on Linux).
 
 **TTLs follow a volatility gradient** — the more often a resource changes, the shorter its lifetime:
 
@@ -36,7 +40,7 @@ Comments get the shortest TTL because they are the most volatile; work items fol
 
 **Keys are scoped by a hash of `base_url`** so two Plane instances never collide. The key format is `{sha256(base_url)[:12]}:{resource}:{workspace}[:{project_id}[:{item_id}]]`. The optional `item_id` level was added so per-item resources (comments) cache independently of one another; only comments use it today.
 
-**Invalidation** is explicit after writes: every create/update/delete calls `invalidate_resource("<resource>", workspace, project_id)`; `configure` clears the whole cache because credentials (and thus the instance) may have changed. `--no-cache` (or `PLANECLI_NO_CACHE=1`) skips reads but still writes, so the next run is warm.
+**Invalidation** is explicit after writes: every create/update/delete calls `invalidate_resource("<resource>", workspace, project_id)`; `configure` clears the whole cache because credentials (and thus the instance) may have changed. `--no-cache` skips reads but still writes, so the next run is warm.
 
 **Cache failures never block the CLI.** Read/write/invalidate errors are caught, logged as a warning to stderr, and the command falls back to a direct API call.
 

@@ -1,9 +1,15 @@
 # planebotcli Rust rewrite
 
-Tracked as **PLANECLI-9**. The Python CLI (v0.7.0) is feature-complete and
-stable; this rewrite produces a single static Rust binary with the same
+> **Delivered.** This was the plan for the Rust rewrite, tracked as **PLANECLI-9**. It has
+> landed: `pbot` is the only CLI in this repository (the Python line, v0.7.0, has been
+> removed), and the crates under `crates/` implement the design below. It is kept as the
+> record of that decision, not as a proposal — the milestones and the distribution plan were
+> the state of play at the time of writing.
+
+The Python CLI (v0.7.0) was feature-complete and
+stable; this rewrite produced a single static Rust binary with the same
 behavior, split into standardized crates that maximize reuse of the Rust
-ecosystem and minimize hand-written code. Deadline for the core + distribution
+ecosystem and minimize hand-written code. Planned deadline for the core + distribution
 milestones: **2026-09-11**.
 
 ## Why
@@ -61,8 +67,8 @@ subset) · tabled · html-escape · regex · dirs · moka (or a file TTL cache).
 - No official Rust plane-sdk exists → `planebotcli-client` implements the v1
   API directly; the Python "escape hatches" become the normal path.
 - Native async end to end (the Python line was a sync SDK behind `to_thread`).
-- Naming: binary and every package are `planebotcli` (distinct from upstream
-  `planecli`).
+- Naming: binary and every package are `planebotcli`, installed alongside the short `pbot`
+  alias.
 
 ## Distribution
 

@@ -1,10 +1,14 @@
 ---
 status: proposed
 date: YYYY-MM-DD
-decision-makers: PlaneCLI maintainers
+decision-makers: planebotcli maintainers
 ---
 
 # ADR-NNNN: {Short title of the decision}
+
+> **Historical reference.** This ADR records a decision made for the Python implementation
+> that has since been removed from this repository. It is kept for history; the current CLI is
+> the Rust line under `crates/`.
 
 ## Context and Problem Statement
 

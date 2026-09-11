@@ -1,10 +1,14 @@
 ---
 status: accepted
 date: 2026-08-18
-decision-makers: PlaneCLI maintainers
+decision-makers: planebotcli maintainers
 ---
 
 # ADR-0007: Verify writes the API can silently ignore
+
+> **Historical reference.** This ADR records a decision made for the Python implementation
+> that has since been removed from this repository. It is kept for history; the current CLI is
+> the Rust line under `crates/`.
 
 ## Context and Problem Statement
 
@@ -17,7 +21,7 @@ success response.
 The CLI's error contract assumes the opposite: a call that does not raise is a call that
 worked (`handle_api_error` only ever sees SDK exceptions — see
 [ADR-0001](0001-async-wrapper-over-sync-sdk.md)). Under that assumption
-`planecli intake accept <issue-uuid> -p Frontend` printed **"Intake Item Accepted"** and exited
+`pbot intake accept <issue-uuid> -p Frontend` printed **"Intake Item Accepted"** and exited
 `0` for a Member while the item stayed `pending`. The failure was invisible in both output
 streams, and a script consuming `--json` could not tell the two outcomes apart.
 

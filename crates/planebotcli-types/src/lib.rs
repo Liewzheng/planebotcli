@@ -235,6 +235,11 @@ pub struct WorkItem {
     #[serde(rename = "updated_at")]
     pub updated_at: Option<String>,
     pub project: Option<String>,
+    /// Flat project identifier from the search endpoint (`project__identifier`,
+    /// double underscore) — list/detail responses nest it in `project_detail`
+    /// instead, so this stays None there.
+    #[serde(rename = "project__identifier")]
+    pub project_identifier: Option<String>,
     #[serde(rename = "project_detail")]
     pub project_detail: Option<ProjectDetail>,
     #[serde(rename = "estimate_point")]

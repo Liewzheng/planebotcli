@@ -155,7 +155,10 @@ impl PlaneClient {
                     });
                 }
                 return serde_json::from_str(&text).map_err(|e| PlaneError::Api {
-                    message: format!("invalid JSON from {path}: {e}"),
+                    message: format!(
+                        "invalid JSON from {path} (HTTP {status}): {e}; body starts: {}",
+                        snippet_or_redact(&text)
+                    ),
                 });
             }
             let retryable =
@@ -481,12 +484,62 @@ impl PlaneClient {
         Ok(())
     }
 
-    /// `GET /api/v1/workspaces/{ws}/work-items/search/?query=...`
-    pub async fn search_work_items(&self, query: &str) -> Result<Vec<WorkItem>, PlaneError> {
+    /// `GET /api/v1/workspaces/{ws}/work-items/search/?search=...&limit=...`
+    ///
+    /// The endpoint returns an `{"issues": [...]}` envelope on Plane 1.4+ and a
+    /// bare array on older builds; both are accepted. `limit` caps the results.
+    /// `project_id` narrows the search to one project and sends
+    /// `workspace_search=false`; when `None`, the whole workspace is searched.
+    pub async fn search_work_items(
+        &self,
+        query: &str,
+        project_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<WorkItem>, PlaneError> {
         let path = format!("/api/v1/workspaces/{}/work-items/search/", self.workspace);
-        let q = [("query", query.to_string())];
-        self.request_json(reqwest::Method::GET, &path, &q, None)
-            .await
+        let mut q: Vec<(&str, String)> = vec![
+            ("search", query.to_string()),
+            ("limit", limit.to_string()),
+        ];
+        if let Some(pid) = project_id {
+            q.push(("workspace_search", "false".to_string()));
+            q.push(("project_id", pid.to_string()));
+        }
+        let raw: serde_json::Value = self.request_value(reqwest::Method::GET, &path, &q, None).await?;
+        let items = match raw {
+            serde_json::Value::Array(a) => a,
+            serde_json::Value::Object(m) => match m.get("issues").and_then(|v| v.as_array()) {
+                Some(a) => a.clone(),
+                None => {
+                    let actual = m
+                        .get("issues")
+                        .map(|v| match v {
+                            serde_json::Value::Null => "null",
+                            serde_json::Value::String(_) => "a string",
+                            serde_json::Value::Bool(_) => "a bool",
+                            serde_json::Value::Number(_) => "a number",
+                            serde_json::Value::Array(_) => "an array",
+                            serde_json::Value::Object(_) => "an object",
+                        })
+                        .unwrap_or("absent");
+                    return Err(PlaneError::Api {
+                        message: format!(
+                            "unexpected shape from {path}: expected an 'issues' array in the object, found {actual}"
+                        ),
+                    })
+                }
+            },
+            _ => {
+                return Err(PlaneError::Api {
+                    message: format!(
+                        "unexpected shape from {path}: expected an array or an 'issues' object"
+                    ),
+                })
+            }
+        };
+        serde_json::from_value(serde_json::Value::Array(items)).map_err(|e| PlaneError::Api {
+            message: format!("invalid search result from {path}: {e}"),
+        })
     }
 
     /// `PATCH .../work-items/{id}/` with `{"parent": <uuid>}` to set the parent
@@ -1352,6 +1405,24 @@ fn is_sensitive_key(key: &str) -> bool {
     )
 }
 
+/// Substrings that hint a body may carry credentials and must not be echoed.
+const SENSITIVE_SUBSTRINGS: [&str; 11] = [
+    "api_key", "token", "password", "authorization", "secret", "passwd", "jwt", "bearer",
+    "secret_key", "access_token", "private_key",
+];
+
+/// First 160 characters of a body for an error message, redacted when the head
+/// looks like it may carry credentials (token/password/secret), which could
+/// otherwise leak into logs.
+fn snippet_or_redact(body: &str) -> String {
+    let head: String = body.chars().take(160).collect();
+    let lower = head.to_ascii_lowercase();
+    if SENSITIVE_SUBSTRINGS.iter().any(|k| lower.contains(k)) {
+        return "<redacted: body may contain credentials>".to_string();
+    }
+    head
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1591,6 +1662,209 @@ mod http_tests {
             .await
             .unwrap();
         assert!(created["blocking"].is_array());
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_work_items_parses_issues_envelope() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "search".to_string(),
+                "webhook".to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"issues":[{"name":"Webhook 评审路径","id":"i1","sequence_id":34,"project__identifier":"RENG","project_id":"p1","workspace__slug":"ws"}]}"#,
+            )
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let items = client.search_work_items("webhook", None, 20).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].project_identifier.as_deref(), Some("RENG"));
+        assert!(items[0].project_detail.is_none());
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_work_items_accepts_bare_array() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "search".to_string(),
+                "x".to_string(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"[{"name":"Old","id":"i1","sequence_id":1}]"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let items = client.search_work_items("x", None, 20).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name.as_deref(), Some("Old"));
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_work_items_sends_project_scope_params() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded(
+                    "search".to_string(),
+                    "webhook".to_string(),
+                ),
+                mockito::Matcher::UrlEncoded(
+                    "workspace_search".to_string(),
+                    "false".to_string(),
+                ),
+                mockito::Matcher::UrlEncoded(
+                    "project_id".to_string(),
+                    "p1".to_string(),
+                ),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"issues":[]}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let items = client
+            .search_work_items("webhook", Some("p1"), 20)
+            .await
+            .unwrap();
+        assert!(items.is_empty());
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_work_items_rejects_unexpected_shape() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#""just a string""#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let err = client.search_work_items("x", None, 20).await.unwrap_err();
+        let PlaneError::Api { message } = err else {
+            panic!("expected Api error")
+        };
+        assert!(message.contains("unexpected shape"), "{message}");
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn invalid_json_error_includes_status_and_body_snippet() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/users/me/")
+            .with_status(200)
+            .with_header("content-type", "text/html")
+            .with_body("<html>proxy error</html>")
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let err = client.get_me().await.unwrap_err();
+        let PlaneError::Api { message } = err else {
+            panic!("expected Api error")
+        };
+        assert!(message.contains("HTTP 200"), "{message}");
+        assert!(message.contains("<html>proxy error</html>"), "{message}");
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_work_items_rejects_empty_object_and_null() {
+        for body in [r#"{}"#, r#"null"#] {
+            let mut server = mockito::Server::new_async().await;
+            let m = server
+                .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+                .match_query(mockito::Matcher::Any)
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(body)
+                .create_async()
+                .await;
+            let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+            let err = client.search_work_items("x", None, 20).await.unwrap_err();
+            let PlaneError::Api { message } = err else {
+                panic!("expected Api error")
+            };
+            assert!(message.contains("unexpected shape"), "{message}");
+            m.assert_async().await;
+        }
+    }
+
+    #[test]
+    fn error_snippet_redacts_credential_like_bodies() {
+        for body in [
+            r#"{"api_key":"supersecret","name":"x"}"#,
+            "token=abc123",
+            "Bearer secret-token",
+            "access_token=zzz",
+        ] {
+            let snippet = snippet_or_redact(body);
+            assert!(snippet.contains("redacted"), "{snippet}");
+        }
+        let plain = snippet_or_redact("<html>ok</html>");
+        assert!(plain.contains("<html>ok</html>"));
+    }
+
+    #[test]
+    fn error_snippet_truncates_at_160_chars() {
+        let short = snippet_or_redact(&"x".repeat(160));
+        assert_eq!(short.len(), 160);
+        let long = snippet_or_redact(&"y".repeat(300));
+        assert_eq!(long.len(), 160);
+    }
+
+    #[tokio::test]
+    async fn search_work_items_rejects_malformed_item_in_issues() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"issues":[{"name":"no id here"}]}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let err = client.search_work_items("x", None, 20).await.unwrap_err();
+        let PlaneError::Api { message } = err else {
+            panic!("expected Api error")
+        };
+        assert!(message.contains("invalid search result"), "{message}");
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn search_work_items_sends_zero_limit() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
+            .match_query(mockito::Matcher::AllOf(vec![
+                mockito::Matcher::UrlEncoded("search".to_string(), "x".to_string()),
+                mockito::Matcher::UrlEncoded("limit".to_string(), "0".to_string()),
+            ]))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"issues":[]}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let items = client.search_work_items("x", None, 0).await.unwrap();
+        assert!(items.is_empty());
         m.assert_async().await;
     }
 }

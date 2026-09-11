@@ -1,14 +1,18 @@
 ---
 status: accepted
 date: 2026-07-03
-decision-makers: PlaneCLI maintainers
+decision-makers: planebotcli maintainers
 ---
 
 # ADR-0001: Async wrapper over the synchronous Plane SDK
 
+> **Historical reference.** This ADR records a decision made for the Python implementation
+> that has since been removed from this repository. It is kept for history; the current CLI is
+> the Rust line under `crates/`.
+
 ## Context and Problem Statement
 
-The official `plane-sdk` is fully synchronous: every method issues a blocking HTTP request via `requests`. A single PlaneCLI command frequently needs many such calls — for example, `wi list` with no `--project` fetches work items for every project in the workspace, and resolving `--assignee`/`--state`/`--labels` each needs a resource list. Doing these one at a time is slow, and firing them all at once risks hitting Plane's rate limits (HTTP 429) and transient gateway errors (502/503/504). We need a way to run blocking SDK calls concurrently, bound the concurrency, and survive transient failures — without rewriting the SDK or making commands aware of any of it.
+The official `plane-sdk` is fully synchronous: every method issues a blocking HTTP request via `requests`. A single pbotcli command frequently needs many such calls — for example, `wi list` with no `--project` fetches work items for every project in the workspace, and resolving `--assignee`/`--state`/`--labels` each needs a resource list. Doing these one at a time is slow, and firing them all at once risks hitting Plane's rate limits (HTTP 429) and transient gateway errors (502/503/504). We need a way to run blocking SDK calls concurrently, bound the concurrency, and survive transient failures — without rewriting the SDK or making commands aware of any of it.
 
 ## Considered Options
 

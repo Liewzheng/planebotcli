@@ -2,7 +2,7 @@
 //!
 //! The Plane API stores HTML verbatim and does not parse markdown or auto-link
 //! URLs — only the web editor does — so text written via the CLI must arrive
-//! already converted. Ported from `src/planecli/utils/body_html.py`.
+//! already converted. Ported from the removed Python line's `utils/body_html.py`.
 
 use regex::Regex;
 

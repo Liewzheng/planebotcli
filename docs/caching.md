@@ -1,6 +1,10 @@
 # Caching
 
-PlaneCLI uses a persistent disk-based cache to reduce redundant API calls. Most CLI commands resolve resources by name (fuzzy matching), which requires fetching full lists of projects, states, labels, and members from the Plane API. Without caching, a single `planecli wi list` across 10 projects can trigger 30+ API calls. With caching, warm runs eliminate >80% of those calls.
+> **Historical reference.** This document describes the Python implementation that has been
+> removed from this repository. It is kept for history, not as a description of the current
+> CLI — the Rust line lives under `crates/` (see [rust-rewrite.md](rust-rewrite.md)).
+
+pbotcli uses a persistent disk-based cache to reduce redundant API calls. Most CLI commands resolve resources by name (fuzzy matching), which requires fetching full lists of projects, states, labels, and members from the Plane API. Without caching, a single `pbot wi list` across 10 projects can trigger 30+ API calls. With caching, warm runs eliminate >80% of those calls.
 
 ## How It Works
 
@@ -17,8 +21,8 @@ The cache is backed by SQLite (via [diskcache](https://github.com/grantjenks/pyt
 
 | Platform | Path |
 |----------|------|
-| macOS | `~/Library/Caches/planecli/` |
-| Linux | `$XDG_CACHE_HOME/planecli/` (default: `~/.cache/planecli/`) |
+| macOS | `~/Library/Caches/pbotcli/` |
+| Linux | `$XDG_CACHE_HOME/pbotcli/` (default: `~/.cache/pbotcli/`) |
 
 The cache is limited to **100 MB** with LRU eviction.
 
@@ -93,7 +97,7 @@ Members are not mutated via the CLI, so they rely on TTL expiry only.
 Clear the entire cache:
 
 ```bash
-planecli cache clear
+pbot cache clear
 ```
 
 ## Bypassing the Cache
@@ -103,17 +107,13 @@ planecli cache clear
 Use `--no-cache` to skip cache reads for a single invocation. The fresh data still gets written to the cache, so subsequent runs benefit from it:
 
 ```bash
-planecli --no-cache project list
+pbot --no-cache project list
 ```
 
 ### Via Environment Variable
 
-```bash
-export PLANECLI_NO_CACHE=1
-planecli project list
-```
-
-Accepted values: `1`, `true`, `yes`.
+The Python line accepted an environment variable for this; the Rust line has no
+equivalent — use `--no-cache` per command.
 
 ## Error Handling
 
@@ -123,4 +123,4 @@ Cache failures never block CLI usage. If the cache is corrupted or the disk is f
 2. The CLI falls back to direct API calls
 3. The command completes normally
 
-If the cache becomes corrupted beyond recovery, run `planecli cache clear` to delete it entirely.
+If the cache becomes corrupted beyond recovery, run `pbot cache clear` to delete it entirely.

@@ -2252,9 +2252,11 @@ fn match_label<'a>(query: &str, labels: &'a [Label]) -> Option<&'a Label> {
     if planebotcli_resolve::is_uuid(query) {
         return labels.iter().find(|l| l.id == query);
     }
-    labels
-        .iter()
-        .find(|l| l.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(query)))
+    labels.iter().find(|l| {
+        l.name
+            .as_deref()
+            .is_some_and(|n| n.eq_ignore_ascii_case(query))
+    })
 }
 
 /// Match a state reference: UUID, then exact name (case-insensitive), then fuzzy
@@ -2268,12 +2270,14 @@ fn match_state<'a>(query: &str, states: &'a [State]) -> Option<&'a State> {
     }
     states
         .iter()
-        .find(|s| s.name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(query)))
+        .find(|s| {
+            s.name
+                .as_deref()
+                .is_some_and(|n| n.eq_ignore_ascii_case(query))
+        })
         .or_else(|| {
-            planebotcli_resolve::find_best_match(query, states, |s| {
-                s.name.as_deref().unwrap_or("")
-            })
-            .map(|m| m.item)
+            planebotcli_resolve::find_best_match(query, states, |s| s.name.as_deref().unwrap_or(""))
+                .map(|m| m.item)
         })
 }
 
@@ -3477,7 +3481,9 @@ async fn cmd_wi_search(
         Some(p) => Some(resolve_project(p, client).await?.id),
         None => None,
     };
-    let items = client.search_work_items(query, project_id.as_deref(), limit).await?;
+    let items = client
+        .search_work_items(query, project_id.as_deref(), limit)
+        .await?;
     let lookups = Lookups {
         state_map: HashMap::new(),
         label_map: HashMap::new(),
@@ -5324,10 +5330,7 @@ mod tests {
 
     #[test]
     fn label_matches_exactly_only() {
-        let labels = vec![
-            label("l1", "release-0.10.6"),
-            label("l2", "release-0.10.9"),
-        ];
+        let labels = vec![label("l1", "release-0.10.6"), label("l2", "release-0.10.9")];
         assert_eq!(
             match_label("release-0.10.9", &labels).map(|l| l.id.as_str()),
             Some("l2")

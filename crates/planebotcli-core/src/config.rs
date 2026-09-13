@@ -102,14 +102,11 @@ fn read_toml_config(path: &Path) -> HashMap<String, String> {
         return values;
     };
     for key in ["base_url", "api_key", "workspace"] {
-        let value = doc
-            .get(key)
-            .and_then(toml_string)
-            .or_else(|| {
-                doc.get("auth")
-                    .and_then(|t| t.get(key))
-                    .and_then(toml_string)
-            });
+        let value = doc.get(key).and_then(toml_string).or_else(|| {
+            doc.get("auth")
+                .and_then(|t| t.get(key))
+                .and_then(toml_string)
+        });
         if let Some(v) = value {
             values.insert(key.to_string(), v);
         }
@@ -336,7 +333,10 @@ mod tests {
     #[test]
     fn parses_toml_config_auth_section() {
         let mut path = std::env::temp_dir();
-        path.push(format!("planebotcli_test_toml_auth_{}.toml", std::process::id()));
+        path.push(format!(
+            "planebotcli_test_toml_auth_{}.toml",
+            std::process::id()
+        ));
         std::fs::write(
             &path,
             "[auth]\nbase_url = \"http://y\"\napi_key = \"def\"\nworkspace = \"ws2\"\n",
@@ -352,7 +352,10 @@ mod tests {
     #[test]
     fn toml_top_level_wins_over_auth_section() {
         let mut path = std::env::temp_dir();
-        path.push(format!("planebotcli_test_toml_prio_{}.toml", std::process::id()));
+        path.push(format!(
+            "planebotcli_test_toml_prio_{}.toml",
+            std::process::id()
+        ));
         std::fs::write(
             &path,
             "base_url = \"http://top\"\n[auth]\nbase_url = \"http://auth\"\n",
@@ -360,7 +363,10 @@ mod tests {
         .unwrap();
         let values = read_config_file_from(&path);
         std::fs::remove_file(&path).unwrap();
-        assert_eq!(values.get("base_url").map(String::as_str), Some("http://top"));
+        assert_eq!(
+            values.get("base_url").map(String::as_str),
+            Some("http://top")
+        );
     }
 
     #[test]
@@ -373,7 +379,10 @@ mod tests {
         std::fs::write(&low, "base_url=http://low\n").unwrap();
         let values = read_first_existing(&[high.clone(), low.clone()]);
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(values.get("base_url").map(String::as_str), Some("http://high"));
+        assert_eq!(
+            values.get("base_url").map(String::as_str),
+            Some("http://high")
+        );
     }
 
     #[test]
@@ -459,7 +468,10 @@ mod tests {
         let values = read_first_existing(&[locked.clone(), filled.clone()]);
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600)).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(values.get("base_url").map(String::as_str), Some("http://ok"));
+        assert_eq!(
+            values.get("base_url").map(String::as_str),
+            Some("http://ok")
+        );
     }
 
     #[cfg(unix)]
@@ -467,7 +479,10 @@ mod tests {
     fn save_config_toml_writes_are_private() {
         use std::os::unix::fs::PermissionsExt;
         let mut path = std::env::temp_dir();
-        path.push(format!("planebotcli_save_toml_perm_{}.toml", std::process::id()));
+        path.push(format!(
+            "planebotcli_save_toml_perm_{}.toml",
+            std::process::id()
+        ));
         write_config_file(&path, "http://x", "s", "w").unwrap();
         let permissions = std::fs::metadata(&path).unwrap().permissions();
         assert_eq!(permissions.mode() & 0o777, 0o600);
@@ -484,13 +499,19 @@ mod tests {
         std::fs::write(&filled, "base_url=http://ok\n").unwrap();
         let values = read_first_existing(&[empty.clone(), filled.clone()]);
         std::fs::remove_dir_all(&dir).unwrap();
-        assert_eq!(values.get("base_url").map(String::as_str), Some("http://ok"));
+        assert_eq!(
+            values.get("base_url").map(String::as_str),
+            Some("http://ok")
+        );
     }
 
     #[test]
     fn toml_accepts_integer_and_boolean_values() {
         let mut path = std::env::temp_dir();
-        path.push(format!("planebotcli_toml_types_{}.toml", std::process::id()));
+        path.push(format!(
+            "planebotcli_toml_types_{}.toml",
+            std::process::id()
+        ));
         std::fs::write(
             &path,
             "base_url = \"http://x\"\napi_key = 12345\nworkspace = true\n",
@@ -513,7 +534,10 @@ mod tests {
         .unwrap();
         let values = read_config_file_from(&path);
         std::fs::remove_file(&path).unwrap();
-        assert_eq!(values.get("base_url").map(String::as_str), Some("http://top"));
+        assert_eq!(
+            values.get("base_url").map(String::as_str),
+            Some("http://top")
+        );
         assert_eq!(values.get("api_key").map(String::as_str), Some("secret"));
         assert_eq!(values.get("workspace").map(String::as_str), Some("ws"));
     }

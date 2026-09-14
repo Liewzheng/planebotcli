@@ -4079,43 +4079,70 @@ fn md_fence_open(line: &str) -> Option<&'static str> {
     }
 }
 
+/// Rebuild `md` line by line, applying `f` to every ordinary line and leaving
+/// fenced code blocks untouched. Both the image scanner and the src rewriter go
+/// through this, so "what counts as code" is defined exactly once.
+fn map_content_lines(md: &str, mut f: impl FnMut(&str, usize) -> String) -> String {
+    let mut out = String::new();
+    let mut fence: Option<&'static str> = None;
+    for (idx, raw) in md.lines().enumerate() {
+        let trimmed = raw.trim_start();
+        let line = match fence {
+            Some(marker) => {
+                if trimmed.starts_with(marker) {
+                    fence = None;
+                }
+                raw.to_string()
+            }
+            None => match md_fence_open(trimmed) {
+                Some(marker) => {
+                    fence = Some(marker);
+                    raw.to_string()
+                }
+                None => f(raw, idx + 1),
+            },
+        };
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
+}
+
 /// Collect `![alt](src)` from a markdown body, skipping fenced code blocks —
 /// the same view `md_to_html` converts, so example code in a fence is never
 /// treated as an image reference.
 fn scan_md_images(md: &str) -> Vec<MdImage> {
     let mut images = Vec::new();
-    let mut fence: Option<&'static str> = None;
-    for (idx, raw) in md.lines().enumerate() {
-        let trimmed = raw.trim_start();
-        match fence {
-            Some(marker) => {
-                if trimmed.starts_with(marker) {
-                    fence = None;
-                }
-            }
-            None => match md_fence_open(trimmed) {
-                Some(marker) => fence = Some(marker),
-                None => images.extend(scan_line_images(raw, idx + 1)),
-            },
-        }
-    }
+    map_content_lines(md, |line, line_no| {
+        images.extend(scan_line_images(line, line_no));
+        line.to_string()
+    });
     images
+}
+
+/// One `![alt](src)` occurrence on a line: the byte range of the whole
+/// construct (for rewriting) plus its parts.
+struct ImageSpan {
+    start: usize,
+    end: usize,
+    alt: String,
+    src: String,
 }
 
 /// All `![alt](src)` occurrences on one line (a `src` with whitespace is not
 /// matched, mirroring the converter's grammar).
-fn scan_line_images(line: &str, line_no: usize) -> Vec<MdImage> {
-    let mut out = Vec::new();
-    let mut rest = line;
-    while let Some(bang) = rest.find("![") {
-        let after = &rest[bang + 2..];
+fn find_image_spans(line: &str) -> Vec<ImageSpan> {
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+    while let Some(bang) = line[cursor..].find("![") {
+        let start = cursor + bang;
+        let after = &line[start + 2..];
         let Some(close_alt) = after.find(']') else {
             break;
         };
-        let alt = after[..close_alt].to_string();
         let after_alt = &after[close_alt + 1..];
         if !after_alt.starts_with('(') {
-            rest = after_alt;
+            cursor = start + 2;
             continue;
         }
         let paren = &after_alt[1..];
@@ -4123,16 +4150,30 @@ fn scan_line_images(line: &str, line_no: usize) -> Vec<MdImage> {
             break;
         };
         let src = paren[..close_src].to_string();
+        let end = start + 2 + close_alt + 1 + 1 + close_src + 1;
         if !src.is_empty() && !src.chars().any(char::is_whitespace) {
-            out.push(MdImage {
-                line: line_no,
-                alt,
+            spans.push(ImageSpan {
+                start,
+                end,
+                alt: after[..close_alt].to_string(),
                 src,
             });
         }
-        rest = &paren[close_src + 1..];
+        cursor = end;
     }
-    out
+    spans
+}
+
+/// All `![alt](src)` occurrences on one line, with the line number attached.
+fn scan_line_images(line: &str, line_no: usize) -> Vec<MdImage> {
+    find_image_spans(line)
+        .into_iter()
+        .map(|span| MdImage {
+            line: line_no,
+            alt: span.alt,
+            src: span.src,
+        })
+        .collect()
 }
 
 /// What the plan does with one image, for the dry-run report and the summary.
@@ -4283,63 +4324,28 @@ async fn upload_page_image(
 /// Replace the `src` of each listed local image with its uploaded asset UUID,
 /// leaving remote URLs, existing asset ids, and fenced code untouched.
 fn substitute_image_srcs(md: &str, uploaded: &HashMap<String, String>) -> String {
-    let mut out = String::new();
-    let mut fence: Option<&'static str> = None;
-    for raw in md.lines() {
-        let trimmed = raw.trim_start();
-        let replaced = match fence {
-            Some(marker) => {
-                if trimmed.starts_with(marker) {
-                    fence = None;
-                }
-                raw.to_string()
-            }
-            None => match md_fence_open(trimmed) {
-                Some(marker) => {
-                    fence = Some(marker);
-                    raw.to_string()
-                }
-                None => replace_line_srcs(raw, uploaded),
-            },
-        };
-        out.push_str(&replaced);
-        out.push('\n');
-    }
-    out
+    map_content_lines(md, |line, _| replace_line_srcs(line, uploaded))
 }
 
 fn replace_line_srcs(line: &str, uploaded: &HashMap<String, String>) -> String {
-    let mut out = String::new();
-    let mut rest = line;
-    while let Some(bang) = rest.find("![") {
-        out.push_str(&rest[..bang]);
-        let after = &rest[bang + 2..];
-        let Some(close_alt) = after.find(']') else {
-            out.push_str(&rest[bang..]);
-            return out;
-        };
-        out.push_str(&rest[bang..bang + 2 + close_alt + 1]);
-        let after_alt = &after[close_alt + 1..];
-        if !after_alt.starts_with('(') {
-            rest = after_alt;
-            continue;
-        }
-        let paren = &after_alt[1..];
-        let Some(close_src) = paren.find(')') else {
-            out.push_str(after_alt);
-            return out;
-        };
-        let src = &paren[..close_src];
-        match classify_image_src(src) {
-            ImageSource::Local(path) => match uploaded.get(&path) {
-                Some(asset_id) => out.push_str(&format!("({asset_id}")),
-                None => out.push_str(&format!("({src}")),
-            },
-            _ => out.push_str(&format!("({src}")),
-        }
-        rest = &paren[close_src..];
+    let spans = find_image_spans(line);
+    if spans.is_empty() {
+        return line.to_string();
     }
-    out.push_str(rest);
+    let mut out = String::new();
+    let mut last = 0;
+    for span in spans {
+        out.push_str(&line[last..span.start]);
+        match classify_image_src(&span.src) {
+            ImageSource::Local(path) => match uploaded.get(&path) {
+                Some(asset_id) => out.push_str(&format!("![{}]({asset_id})", span.alt)),
+                None => out.push_str(&line[span.start..span.end]),
+            },
+            _ => out.push_str(&line[span.start..span.end]),
+        }
+        last = span.end;
+    }
+    out.push_str(&line[last..]);
     out
 }
 
@@ -4456,7 +4462,15 @@ async fn cmd_doc_create(
         None => created,
         Some(md) => {
             let replaced =
-                upload_md_images(client, &created.id, scope_project_id(&scope), md).await?;
+                match upload_md_images(client, &created.id, scope_project_id(&scope), md).await {
+                    Ok(replaced) => replaced,
+                    Err(e) => {
+                        // Don't leave a half-created page (created only to host
+                        // the images) behind when an upload fails.
+                        let _ = client.delete_page(&scope, &created.id).await;
+                        return Err(e);
+                    }
+                };
             let patch = PageWrite {
                 description_html: Some(planebotcli_html::md_to_html(&replaced)),
                 ..Default::default()

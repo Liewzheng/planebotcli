@@ -735,7 +735,7 @@ pbot doc show <doc> [-p <project>] [--json]
 
 ```
 pbot doc create --title <title> (--content <text> | --content-md <markdown> | --content-html <html>)
-                [-p <project>] [--json]
+                [-p <project>] [--dry-run] [--json]
 ```
 
 **选项**
@@ -744,17 +744,22 @@ pbot doc create --title <title> (--content <text> | --content-md <markdown> | --
 |---|---|
 | `--title <title>` | 页面标题（必填）。 |
 | `-c, --content <text>` | 内容（纯文本，按评论方式转换：分段、`code`、链接）。 |
-| `--content-md <markdown>` | 内容（原生 markdown：标题/列表/代码/链接）。 |
+| `--content-md <markdown>` | 内容（原生 markdown：标题/列表/代码/链接/图片）。 |
 | `--content-html <html>` | 内容（原样 HTML，存原文，适合富排版）。 |
 | `-p, --project <name\|id>` | 项目；省略则创建到工作区级页面。 |
+| `--dry-run` | 只报告目标与每张图片的判定，不做任何写入；图片缺失或 MIME 不允许时非零退出。 |
 
 三种内容输入互斥。
+
+**`--content-md` 里的图片无需额外参数**：本地路径（`./a.png` 或 `file://…`）会上传为页面资产并把 src 替换为 asset id；远端 URL 或已是 asset id 的原样保留；围栏代码块里的图片不处理。文件缺失/不可读、或 MIME 不在
+`image/jpeg|png|webp|gif` 内则命令失败（SVG 服务端拒绝）。
 
 **示例**
 
 ```
 $ pbot doc create --title "Runbook" -p PLANECLI --content-md "$(cat runbook.md)" --json
 $ pbot doc create --title "Spec" -p PLANECLI --content-html "$(cat spec.html)" --json
+$ pbot doc create --title "Spec" -p PLANECLI --content-md "$(cat spec.md)" --dry-run
 ```
 
 ### pbot doc update
@@ -763,7 +768,7 @@ $ pbot doc create --title "Spec" -p PLANECLI --content-html "$(cat spec.html)" -
 
 ```
 pbot doc update <doc> [--title <title>] [--content <text> | --content-md <markdown> | --content-html <html>]
-                [-p <project>] [--json]
+                [-p <project>] [--dry-run] [--json]
 ```
 
 ### pbot doc archive

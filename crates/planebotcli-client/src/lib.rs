@@ -854,6 +854,49 @@ impl PlaneClient {
         self.app_json(reqwest::Method::GET, &url, None).await
     }
 
+    /// `POST /api/v1/workspaces/{ws}/assets/` — register a page-description image
+    /// (`entity_type: "PAGE_DESCRIPTION"`, `entity_identifier` = page id) through
+    /// the workspace-scoped generic-asset endpoint. `project_id` is sent for a
+    /// project page and omitted for a workspace-level page (the server rejects a
+    /// mismatched or stray `project_id`). Returns
+    /// `{asset_id, upload_data, asset_url}`.
+    pub async fn register_page_asset(
+        &self,
+        page_id: &str,
+        project_id: Option<&str>,
+        name: &str,
+        mime: &str,
+        size: u64,
+    ) -> Result<serde_json::Value, PlaneError> {
+        let path = format!("/api/v1/workspaces/{}/assets/", self.workspace);
+        let mut body = serde_json::json!({
+            "name": name,
+            "type": mime,
+            "size": size,
+            "entity_type": "PAGE_DESCRIPTION",
+            "entity_identifier": page_id,
+        });
+        if let Some(project_id) = project_id {
+            body["project_id"] = serde_json::Value::String(project_id.to_string());
+        }
+        self.request_json(reqwest::Method::POST, &path, &[], Some(&body))
+            .await
+    }
+
+    /// `PATCH /api/v1/workspaces/{ws}/assets/{asset_id}/` with
+    /// `{"is_uploaded": true}` — mark a page asset uploaded (204).
+    ///
+    /// A 2xx is not proof the write landed (ADR-0007); callers read the asset
+    /// back through [`get_workspace_asset`](Self::get_workspace_asset).
+    pub async fn confirm_page_asset(&self, asset_id: &str) -> Result<(), PlaneError> {
+        let path = format!("/api/v1/workspaces/{}/assets/{}/", self.workspace, asset_id);
+        let body = serde_json::json!({ "is_uploaded": true });
+        let _: serde_json::Value = self
+            .request_json(reqwest::Method::PATCH, &path, &[], Some(&body))
+            .await?;
+        Ok(())
+    }
+
     /// Raw authenticated JSON request to a full URL (the app endpoints are not
     /// under `/api/v1`), returning the status and parsed body without retries
     /// or error mapping — callers branch on status codes (fallbacks) that
@@ -1865,6 +1908,77 @@ mod http_tests {
         let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
         let items = client.search_work_items("x", None, 0).await.unwrap();
         assert!(items.is_empty());
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn register_page_asset_posts_page_description() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("POST", "/api/v1/workspaces/ws/assets/")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "name": "diagram.png",
+                "type": "image/png",
+                "size": 2048,
+                "entity_type": "PAGE_DESCRIPTION",
+                "entity_identifier": "page-1",
+                "project_id": "p1",
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"asset_id":"a1","upload_data":{"url":"http://up","fields":{}},"asset_url":"http://x"}"#,
+            )
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let resp = client
+            .register_page_asset("page-1", Some("p1"), "diagram.png", "image/png", 2048)
+            .await
+            .unwrap();
+        assert_eq!(resp["asset_id"], "a1");
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn register_page_asset_omits_project_for_workspace_page() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("POST", "/api/v1/workspaces/ws/assets/")
+            .match_body(mockito::Matcher::Json(serde_json::json!({
+                "name": "d.png",
+                "type": "image/png",
+                "size": 1,
+                "entity_type": "PAGE_DESCRIPTION",
+                "entity_identifier": "page-2",
+            })))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"asset_id":"a2","upload_data":{},"asset_url":"http://x"}"#)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        let resp = client
+            .register_page_asset("page-2", None, "d.png", "image/png", 1)
+            .await
+            .unwrap();
+        assert_eq!(resp["asset_id"], "a2");
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn confirm_page_asset_patches_uploaded_true() {
+        let mut server = mockito::Server::new_async().await;
+        let m = server
+            .mock("PATCH", "/api/v1/workspaces/ws/assets/a1/")
+            .match_body(mockito::Matcher::Json(
+                serde_json::json!({ "is_uploaded": true }),
+            ))
+            .with_status(204)
+            .create_async()
+            .await;
+        let client = PlaneClient::with_cache(&cfg(&server.url()), true).unwrap();
+        client.confirm_page_asset("a1").await.unwrap();
         m.assert_async().await;
     }
 }

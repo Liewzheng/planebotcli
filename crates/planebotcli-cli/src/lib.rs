@@ -3,7 +3,7 @@
 mod render;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
@@ -709,6 +709,10 @@ pub enum DocCmd {
         /// Project name, identifier, or UUID. If omitted, creates a workspace page.
         #[arg(long, short = 'p')]
         project: Option<String>,
+        /// Report what would be written (target, images, verdicts) and exit
+        /// without touching the server; exits 5 when an image cannot be processed.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Update a document.
     Update {
@@ -731,6 +735,10 @@ pub enum DocCmd {
         /// Project name, identifier, or UUID. If omitted, operates on a workspace page.
         #[arg(long, short = 'p')]
         project: Option<String>,
+        /// Report what would be written (target, images, verdicts) and exit
+        /// without touching the server; exits 5 when an image cannot be processed.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Archive a document (trash it) without deleting.
     ///
@@ -1453,6 +1461,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 content_md,
                 content_html,
                 project,
+                dry_run,
             } => {
                 cmd_doc_create(
                     &client,
@@ -1461,6 +1470,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     content_md.as_deref(),
                     content_html.as_deref(),
                     project.as_deref(),
+                    dry_run,
                     cli.json,
                 )
                 .await
@@ -1472,6 +1482,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 content_md,
                 content_html,
                 project,
+                dry_run,
             } => {
                 cmd_doc_update(
                     &client,
@@ -1481,6 +1492,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     content_md.as_deref(),
                     content_html.as_deref(),
                     project.as_deref(),
+                    dry_run,
                     cli.json,
                 )
                 .await
@@ -4023,6 +4035,370 @@ async fn cmd_doc_show(
     Ok(())
 }
 
+/// Image MIME types the page-asset endpoint accepts (`entity_type:
+/// PAGE_DESCRIPTION`); SVG is deliberately excluded (reserved for mermaid on
+/// the server).
+const PAGE_IMAGE_MIMES: [&str; 4] = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+
+/// One `![alt](src)` occurrence in a markdown body, with its 1-based line.
+#[derive(Debug, PartialEq, Eq)]
+struct MdImage {
+    line: usize,
+    alt: String,
+    src: String,
+}
+
+/// Where an image `src` points: a remote URL (kept), an existing asset UUID
+/// (kept), or a local file that must be uploaded.
+#[derive(Debug, PartialEq, Eq)]
+enum ImageSource {
+    Remote,
+    AssetId,
+    Local(String),
+}
+
+fn classify_image_src(src: &str) -> ImageSource {
+    if src.starts_with("http://") || src.starts_with("https://") {
+        ImageSource::Remote
+    } else if planebotcli_resolve::is_uuid(src) {
+        ImageSource::AssetId
+    } else {
+        ImageSource::Local(src.strip_prefix("file://").unwrap_or(src).to_string())
+    }
+}
+
+/// Detect a fenced-code opening line (``` or ~~~) — the fence marker to watch
+/// for a matching close.
+fn md_fence_open(line: &str) -> Option<&'static str> {
+    if line.starts_with("```") {
+        Some("```")
+    } else if line.starts_with("~~~") {
+        Some("~~~")
+    } else {
+        None
+    }
+}
+
+/// Rebuild `md` line by line, applying `f` to every ordinary line and leaving
+/// fenced code blocks untouched. Both the image scanner and the src rewriter go
+/// through this, so "what counts as code" is defined exactly once.
+fn map_content_lines(md: &str, mut f: impl FnMut(&str, usize) -> String) -> String {
+    let mut out = String::new();
+    let mut fence: Option<&'static str> = None;
+    for (idx, raw) in md.lines().enumerate() {
+        let trimmed = raw.trim_start();
+        let line = match fence {
+            Some(marker) => {
+                if trimmed.starts_with(marker) {
+                    fence = None;
+                }
+                raw.to_string()
+            }
+            None => match md_fence_open(trimmed) {
+                Some(marker) => {
+                    fence = Some(marker);
+                    raw.to_string()
+                }
+                None => f(raw, idx + 1),
+            },
+        };
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
+}
+
+/// Collect `![alt](src)` from a markdown body, skipping fenced code blocks —
+/// the same view `md_to_html` converts, so example code in a fence is never
+/// treated as an image reference.
+fn scan_md_images(md: &str) -> Vec<MdImage> {
+    let mut images = Vec::new();
+    map_content_lines(md, |line, line_no| {
+        images.extend(scan_line_images(line, line_no));
+        line.to_string()
+    });
+    images
+}
+
+/// One `![alt](src)` occurrence on a line: the byte range of the whole
+/// construct (for rewriting) plus its parts.
+struct ImageSpan {
+    start: usize,
+    end: usize,
+    alt: String,
+    src: String,
+}
+
+/// All `![alt](src)` occurrences on one line (a `src` with whitespace is not
+/// matched, mirroring the converter's grammar).
+fn find_image_spans(line: &str) -> Vec<ImageSpan> {
+    let mut spans = Vec::new();
+    let mut cursor = 0;
+    while let Some(bang) = line[cursor..].find("![") {
+        let start = cursor + bang;
+        let after = &line[start + 2..];
+        let Some(close_alt) = after.find(']') else {
+            break;
+        };
+        let after_alt = &after[close_alt + 1..];
+        if !after_alt.starts_with('(') {
+            cursor = start + 2;
+            continue;
+        }
+        let paren = &after_alt[1..];
+        let Some(close_src) = paren.find(')') else {
+            break;
+        };
+        let src = paren[..close_src].to_string();
+        let end = start + 2 + close_alt + 1 + 1 + close_src + 1;
+        if !src.is_empty() && !src.chars().any(char::is_whitespace) {
+            spans.push(ImageSpan {
+                start,
+                end,
+                alt: after[..close_alt].to_string(),
+                src,
+            });
+        }
+        cursor = end;
+    }
+    spans
+}
+
+/// All `![alt](src)` occurrences on one line, with the line number attached.
+fn scan_line_images(line: &str, line_no: usize) -> Vec<MdImage> {
+    find_image_spans(line)
+        .into_iter()
+        .map(|span| MdImage {
+            line: line_no,
+            alt: span.alt,
+            src: span.src,
+        })
+        .collect()
+}
+
+/// What the plan does with one image, for the dry-run report and the summary.
+#[derive(Debug, PartialEq, Eq)]
+enum ImagePlan {
+    Upload,
+    Keep,
+    Error,
+}
+
+/// One report line plus its plan; `--dry-run` counts plans for the summary and
+/// exits non-zero when any is [`ImagePlan::Error`].
+fn describe_image(index: usize, image: &MdImage) -> (String, ImagePlan) {
+    match classify_image_src(&image.src) {
+        ImageSource::Remote => (
+            format!(
+                "{index}. [remote] alt=\"{}\" {} -> keep",
+                image.alt, image.src
+            ),
+            ImagePlan::Keep,
+        ),
+        ImageSource::AssetId => (
+            format!(
+                "{index}. [asset]  alt=\"{}\" {} -> keep",
+                image.alt, image.src
+            ),
+            ImagePlan::Keep,
+        ),
+        ImageSource::Local(path) => {
+            let p = Path::new(&path);
+            match std::fs::metadata(p) {
+                Ok(meta) if meta.is_file() => {
+                    let mime = guess_mime(&path);
+                    if PAGE_IMAGE_MIMES.contains(&mime.as_str()) {
+                        (
+                            format!(
+                                "{index}. [local]  alt=\"{}\" {} -> upload ({mime}, {} bytes)",
+                                image.alt,
+                                path,
+                                meta.len()
+                            ),
+                            ImagePlan::Upload,
+                        )
+                    } else {
+                        (
+                            format!(
+                                "{index}. [local]  alt=\"{}\" {} -> ERROR: MIME {mime} is not allowed for page images (line {})",
+                                image.alt, path, image.line
+                            ),
+                            ImagePlan::Error,
+                        )
+                    }
+                }
+                _ => (
+                    format!(
+                        "{index}. [local]  alt=\"{}\" {} -> ERROR: file not found (line {})",
+                        image.alt, path, image.line
+                    ),
+                    ImagePlan::Error,
+                ),
+            }
+        }
+    }
+}
+
+/// Render the `--dry-run` report and count errors (a non-zero count means the
+/// caller must exit non-zero without writing anything).
+fn render_image_report(target: &str, images: &[MdImage]) -> (String, usize) {
+    let mut out = String::from("dry run: no writes will be performed\n");
+    out.push_str(&format!("target: {target}\n"));
+    out.push_str("images:\n");
+    if images.is_empty() {
+        out.push_str("  (none)\n");
+    }
+    let mut uploads = 0;
+    let mut keeps = 0;
+    let mut errors = 0;
+    for (i, image) in images.iter().enumerate() {
+        let (line, plan) = describe_image(i + 1, image);
+        match plan {
+            ImagePlan::Upload => uploads += 1,
+            ImagePlan::Keep => keeps += 1,
+            ImagePlan::Error => errors += 1,
+        }
+        out.push_str("  ");
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out.push_str(&format!(
+        "summary: {uploads} to upload, {keeps} kept, {errors} error(s)\n"
+    ));
+    (out, errors)
+}
+
+/// The project id a page scope belongs to (`None` for a workspace-level page).
+fn scope_project_id(scope: &PageScope) -> Option<&str> {
+    match scope {
+        PageScope::Project(id) => Some(id),
+        PageScope::Workspace => None,
+    }
+}
+
+/// Upload one local image as a page asset and return its asset UUID.
+///
+/// Goes straight to the v1 workspace-scoped asset endpoint: the app v2
+/// endpoints are session-only, and Pages has no v2 path (unlike work-item
+/// embeds, which fall back to a v1 attachment).
+async fn upload_page_image(
+    client: &PlaneClient,
+    page_id: &str,
+    project_id: Option<&str>,
+    src: &str,
+) -> Result<String, PlaneError> {
+    let file = preflight_upload(src)?;
+    if !PAGE_IMAGE_MIMES.contains(&file.mime.as_str()) {
+        return Err(PlaneError::Validation {
+            message: format!(
+                "{} has MIME '{}' — page images must be one of {}.",
+                src,
+                file.mime,
+                PAGE_IMAGE_MIMES.join(", ")
+            ),
+            hint: Some("Convert the image (SVG is not accepted for pages).".into()),
+        });
+    }
+    let created = client
+        .register_page_asset(page_id, project_id, &file.name, &file.mime, file.size)
+        .await?;
+    let asset_id = created
+        .get("asset_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| PlaneError::Api {
+            message: "the asset register response did not include an asset id.".into(),
+        })?
+        .to_string();
+    let upload_data = created.get("upload_data").ok_or_else(|| PlaneError::Api {
+        message: "the asset register response did not include presigned upload data.".into(),
+    })?;
+
+    let bytes = std::fs::read(file.path).map_err(|e| PlaneError::Api {
+        message: format!("failed to read {}: {e}", file.path.display()),
+    })?;
+    client
+        .upload_to_presigned(upload_data, &file.name, &file.mime, bytes)
+        .await?;
+    client.confirm_page_asset(&asset_id).await?;
+
+    // A 2xx on the confirm PATCH is not proof the write landed (ADR-0007):
+    // read the asset back through the v1 workspace-scoped endpoint.
+    let (status, _) = client.get_workspace_asset(&asset_id).await?;
+    if status != 200 {
+        return Err(PlaneError::Api {
+            message: "Image asset was not confirmed by the server after upload.".into(),
+        });
+    }
+    Ok(asset_id)
+}
+
+/// Replace the `src` of each listed local image with its uploaded asset UUID,
+/// leaving remote URLs, existing asset ids, and fenced code untouched.
+fn substitute_image_srcs(md: &str, uploaded: &HashMap<String, String>) -> String {
+    map_content_lines(md, |line, _| replace_line_srcs(line, uploaded))
+}
+
+fn replace_line_srcs(line: &str, uploaded: &HashMap<String, String>) -> String {
+    let spans = find_image_spans(line);
+    if spans.is_empty() {
+        return line.to_string();
+    }
+    let mut out = String::new();
+    let mut last = 0;
+    for span in spans {
+        out.push_str(&line[last..span.start]);
+        match uploaded.get(&span.src) {
+            Some(asset_id) => out.push_str(&format!("![{}]({asset_id})", span.alt)),
+            None => out.push_str(&line[span.start..span.end]),
+        }
+        last = span.end;
+    }
+    out.push_str(&line[last..]);
+    out
+}
+
+/// Upload every local image `md` references (once per distinct path) and return
+/// the markdown with those sources replaced by asset UUIDs.
+async fn upload_md_images(
+    client: &PlaneClient,
+    page_id: &str,
+    project_id: Option<&str>,
+    md: &str,
+) -> Result<String, PlaneError> {
+    // Deduplicate by the resolved path so `./a.png` and `a.png` share one
+    // upload, but key the substitution map by the literal `src` text.
+    let mut by_real: HashMap<PathBuf, String> = HashMap::new();
+    let mut by_src: HashMap<String, String> = HashMap::new();
+    for image in scan_md_images(md) {
+        let ImageSource::Local(path) = classify_image_src(&image.src) else {
+            continue;
+        };
+        let real = std::fs::canonicalize(&path).unwrap_or_else(|_| PathBuf::from(&path));
+        let asset_id = match by_real.get(&real) {
+            Some(asset_id) => asset_id.clone(),
+            None => {
+                let asset_id = upload_page_image(client, page_id, project_id, &path).await?;
+                by_real.insert(real, asset_id.clone());
+                asset_id
+            }
+        };
+        by_src.insert(image.src.clone(), asset_id);
+    }
+    if by_src.is_empty() {
+        Ok(md.to_string())
+    } else {
+        Ok(substitute_image_srcs(md, &by_src))
+    }
+}
+
+/// True when `md` references at least one local image (the only case that needs
+/// the create-then-patch flow).
+fn md_has_local_image(md: &str) -> bool {
+    scan_md_images(md)
+        .iter()
+        .any(|image| matches!(classify_image_src(&image.src), ImageSource::Local(_)))
+}
+
 /// Build a page description_html from the mutually exclusive content flags:
 /// `--content-html` verbatim, `--content-md` via md_to_html, `--content` plain
 /// text via body_to_html; an empty body becomes an empty paragraph (the API
@@ -4058,6 +4434,9 @@ fn doc_description(
     Ok("<p></p>".to_string())
 }
 
+// A content trio (plain/md/html) plus title/project/dry-run is inherent to the
+// command; grouping further would obscure the clap surface.
+#[allow(clippy::too_many_arguments)]
 async fn cmd_doc_create(
     client: &PlaneClient,
     title: &str,
@@ -4065,16 +4444,70 @@ async fn cmd_doc_create(
     content_md: Option<&str>,
     content_html: Option<&str>,
     project: Option<&str>,
+    dry_run: bool,
     json: bool,
 ) -> Result<(), PlaneError> {
     let scope = page_scope(client, project).await?;
-    let write = PageWrite {
-        name: Some(title.to_string()),
-        description_html: Some(doc_description(content, content_md, content_html)?),
+    if dry_run {
+        let target = format!(
+            "workspace={} project={} page=(new page \"{title}\")",
+            client.workspace(),
+            scope_project_id(&scope).unwrap_or("(workspace page)")
+        );
+        let images = content_md.map(scan_md_images).unwrap_or_default();
+        let (report, errors) = render_image_report(&target, &images);
+        eprint!("{report}");
+        return dry_run_result(errors);
+    }
+    // A markdown body with local images needs the page id before uploading, so
+    // the page is created first and patched once the assets exist (the same
+    // create-then-patch shape as `wi create -i`).
+    let md = content_md.filter(|md| md_has_local_image(md));
+    let write = match md {
+        Some(_) => PageWrite {
+            name: Some(title.to_string()),
+            description_html: Some("<p></p>".to_string()),
+        },
+        None => PageWrite {
+            name: Some(title.to_string()),
+            description_html: Some(doc_description(content, content_md, content_html)?),
+        },
     };
     let created = client.create_page(&scope, &write).await?;
+    let created = match md {
+        None => created,
+        Some(md) => {
+            let replaced =
+                match upload_md_images(client, &created.id, scope_project_id(&scope), md).await {
+                    Ok(replaced) => replaced,
+                    Err(e) => {
+                        // Don't leave a half-created page (created only to host
+                        // the images) behind when an upload fails.
+                        let _ = client.delete_page(&scope, &created.id).await;
+                        return Err(e);
+                    }
+                };
+            let patch = PageWrite {
+                description_html: Some(planebotcli_html::md_to_html(&replaced)),
+                ..Default::default()
+            };
+            client.update_page(&scope, &created.id, &patch).await?
+        }
+    };
     output_page_view(&created, json);
     Ok(())
+}
+
+/// Non-zero exit for a dry run whose report contained image errors.
+fn dry_run_result(errors: usize) -> Result<(), PlaneError> {
+    if errors == 0 {
+        Ok(())
+    } else {
+        Err(PlaneError::Validation {
+            message: format!("{errors} image reference(s) cannot be processed."),
+            hint: Some("Fix the listed images, then re-run without --dry-run.".into()),
+        })
+    }
 }
 
 // A content trio (plain/md/html) plus issue/title/project is inherent to the
@@ -4088,10 +4521,24 @@ async fn cmd_doc_update(
     content_md: Option<&str>,
     content_html: Option<&str>,
     project: Option<&str>,
+    dry_run: bool,
     json: bool,
 ) -> Result<(), PlaneError> {
     let scope = page_scope(client, project).await?;
     let found = resolve_page(client, &scope, doc).await?;
+    if dry_run {
+        let target = format!(
+            "workspace={} project={} page={} ({})",
+            client.workspace(),
+            scope_project_id(&scope).unwrap_or("(workspace page)"),
+            found.id,
+            found.name.as_deref().unwrap_or("")
+        );
+        let images = content_md.map(scan_md_images).unwrap_or_default();
+        let (report, errors) = render_image_report(&target, &images);
+        eprint!("{report}");
+        return dry_run_result(errors);
+    }
     let mut write = PageWrite::default();
     // Title uses truthiness like the Python `if title:`, so `--title ""` is
     // skipped.
@@ -4099,7 +4546,15 @@ async fn cmd_doc_update(
         write.name = Some(t.to_string());
     }
     if content.is_some() || content_md.is_some() || content_html.is_some() {
-        write.description_html = Some(doc_description(content, content_md, content_html)?);
+        let html = match content_md.filter(|md| md_has_local_image(md)) {
+            Some(md) => {
+                let replaced =
+                    upload_md_images(client, &found.id, scope_project_id(&scope), md).await?;
+                planebotcli_html::md_to_html(&replaced)
+            }
+            None => doc_description(content, content_md, content_html)?,
+        };
+        write.description_html = Some(html);
     }
     let updated = client.update_page(&scope, &found.id, &write).await?;
     output_page_view(&updated, json);
@@ -5395,5 +5850,119 @@ mod tests {
             match_state("Todo", &states).map(|s| s.id.as_str()),
             Some("s1")
         );
+    }
+
+    #[test]
+    fn scan_md_images_skips_fenced_code_blocks() {
+        let md = "intro\n\n```\n![not an image](x.png)\n```\n\n![real](a.png)";
+        let images = scan_md_images(md);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].src, "a.png");
+        assert_eq!(images[0].line, 7);
+    }
+
+    #[test]
+    fn scan_md_images_collects_multiple_on_one_line() {
+        let images = scan_md_images("![a](1.png) and ![b](2.png)");
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].alt, "a");
+        assert_eq!(images[1].src, "2.png");
+    }
+
+    #[test]
+    fn classify_image_src_kinds() {
+        assert_eq!(
+            classify_image_src("https://x.io/a.png"),
+            ImageSource::Remote
+        );
+        assert_eq!(
+            classify_image_src("11111111-2222-3333-4444-555555555555"),
+            ImageSource::AssetId
+        );
+        assert_eq!(
+            classify_image_src("./a.png"),
+            ImageSource::Local("./a.png".to_string())
+        );
+        assert_eq!(
+            classify_image_src("file:///tmp/a.png"),
+            ImageSource::Local("/tmp/a.png".to_string())
+        );
+    }
+
+    #[test]
+    fn substitute_image_srcs_replaces_only_local_uploaded() {
+        let mut uploaded = std::collections::HashMap::new();
+        uploaded.insert("./a.png".to_string(), "asset-1".to_string());
+        let out = substitute_image_srcs(
+            "![x](./a.png) ![y](https://x.io/b.png) ![z](asset-2)",
+            &uploaded,
+        );
+        assert_eq!(
+            out.trim_end(),
+            "![x](asset-1) ![y](https://x.io/b.png) ![z](asset-2)"
+        );
+    }
+
+    #[test]
+    fn md_has_local_image_detects_only_local() {
+        assert!(md_has_local_image("![a](./x.png)"));
+        assert!(!md_has_local_image("![a](https://x.io/x.png)"));
+        assert!(!md_has_local_image(
+            "![a](11111111-2222-3333-4444-555555555555)"
+        ));
+        assert!(!md_has_local_image("```\n![a](./x.png)\n```"));
+    }
+
+    #[test]
+    fn dry_run_report_counts_errors_and_keeps() {
+        let md = "![r](https://x.io/a.png) ![u](11111111-2222-3333-4444-555555555555) ![m](./definitely-missing.png)";
+        let (report, errors) = render_image_report("target", &scan_md_images(md));
+        assert_eq!(errors, 1);
+        assert!(report.contains("2 kept"), "{report}");
+        assert!(report.contains("file not found"), "{report}");
+    }
+
+    #[test]
+    fn dry_run_report_without_images_is_clean() {
+        let (report, errors) = render_image_report("target", &[]);
+        assert_eq!(errors, 0);
+        assert!(report.contains("(none)"), "{report}");
+    }
+
+    #[test]
+    fn dry_run_rejects_non_whitelisted_mime() {
+        let dir = std::env::temp_dir().join(format!("pbot_mime_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let svg = dir.join("a.svg");
+        std::fs::write(&svg, "<svg/>").unwrap();
+        let md = format!("![s]({})", svg.display());
+        let (report, errors) = render_image_report("t", &scan_md_images(&md));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(errors, 1);
+        assert!(
+            report.contains("MIME image/svg+xml is not allowed"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn dry_run_reports_empty_alt_local_image() {
+        let dir = std::env::temp_dir().join(format!("pbot_alt_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("a.png");
+        std::fs::write(&png, "x").unwrap();
+        let md = format!("![]({})", png.display());
+        let (report, errors) = render_image_report("t", &scan_md_images(&md));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(errors, 0);
+        assert!(report.contains("1 to upload"), "{report}");
+        assert!(report.contains("alt=\"\""), "{report}");
+    }
+
+    #[test]
+    fn dry_run_result_exit_code() {
+        assert!(dry_run_result(0).is_ok());
+        let err = dry_run_result(2).unwrap_err();
+        assert_eq!(err.exit_code(), 5);
     }
 }

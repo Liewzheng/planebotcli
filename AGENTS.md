@@ -38,13 +38,13 @@ make format                        # cargo fmt --all
 make check                         # lint + test — run before committing
 make run ARGS="wi ls -p Frontend"  # run the CLI (cargo run --bin pbot)
 make e2e                           # scripts/e2e.sh — live smoke test against a real instance
+```
 
 CI (`.github/workflows/ci.yml`) runs the same gate on every push and pull request:
 `cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
 and `cargo test --workspace` on Linux, macOS, and Windows — all three matter because
 config paths and permission handling are platform-sensitive. A green local
 `make check` means a green CI run.
-```
 
 Single test: `cargo test --workspace <name>` (e.g. `cargo test -p planebotcli-resolve resolve_project`),
 or `cargo run --bin pbot -- wi ls` for the CLI without installing it. Edition 2024, rustfmt

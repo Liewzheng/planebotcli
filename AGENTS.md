@@ -189,12 +189,14 @@ of the PR. Local mode needs no PR and publishes nothing:
 RENG=$(command -v reng || echo ~/.local/bin/reng)
 [ -x "$RENG" ] || { echo "reng not found at $RENG — install it or fix PATH, then retry" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq is not installed — it reads the review report" >&2; exit 1; }
-REPORT=$(timeout 900 "$RENG" review --local-path . --base <base-branch> --head <current-branch> 2>&1 \
-  | tail -1 | sed 's/^Report saved to //')
+REPORT=$(timeout 900 "$RENG" review --local-path . --base <base-branch> --head <current-branch> \
+  | tail -1 | sed -n 's/^Report saved to //p')
+[ -f "$REPORT" ] || { echo "reng produced no report — read its output above" >&2; exit 1; }
 jq -r '.consolidated.findings[]? | "[\(.severity)] \(.file):\(.line) — \(.title)"' "$REPORT"
 ```
 
-`--base` is the branch the work was cut from (usually `integration-main`); for a release or
+`<base-branch>` is the branch the work was cut from (usually `integration-main`);
+`<current-branch>` is the branch under review (`git branch --show-current`). For a release or
 sync PR use `--base <remote>/main` (e.g. `planebotcli/main`). Fix what is real in the code
 before pushing and note the rest for the PR disposition. This does **not** replace step 1: the
 PR gate still runs and its findings still get answered there.

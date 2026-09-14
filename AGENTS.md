@@ -190,7 +190,7 @@ RENG=$(command -v reng || echo ~/.local/bin/reng)
 [ -x "$RENG" ] || { echo "reng not found at $RENG — install it or fix PATH, then retry" >&2; exit 1; }
 command -v jq >/dev/null || { echo "jq is not installed — it reads the review report" >&2; exit 1; }
 REPORT=$(timeout 900 "$RENG" review --local-path . --base <base-branch> --head <current-branch> \
-  | tail -1 | sed -n 's/^Report saved to //p')
+  2>&1 >/dev/null | sed -n 's/^Report saved to //p' | tail -1)
 [ -f "$REPORT" ] || { echo "reng produced no report — read its output above" >&2; exit 1; }
 jq -r '.consolidated.findings[]? | "[\(.severity)] \(.file):\(.line) — \(.title)"' "$REPORT"
 ```

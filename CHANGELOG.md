@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `cargo clippy --locked --workspace --all-targets -- -D warnings`, and
   `cargo test --locked --workspace` on Linux, macOS, and Windows — mirroring the
   local `make check` gate. Previously only the cargo-dist release workflow existed.
+  Three existing files were reformatted with rustfmt as part of this change (the
+  new fmt gate caught them).
 - Credentials can now come from a config file discovered from several locations,
   highest priority first: `~/.config/pbot/config.toml` (TOML with top-level
   `base_url` / `api_key` / `workspace`, optionally under `[auth]`), `~/.pbot`,

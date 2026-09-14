@@ -41,8 +41,8 @@ make e2e                           # scripts/e2e.sh — live smoke test against 
 ```
 
 CI (`.github/workflows/ci.yml`) runs the same gate on every push and pull request:
-`cargo fmt --all -- --check`, `cargo clippy --workspace --all-targets -- -D warnings`,
-and `cargo test --workspace` on Linux, macOS, and Windows — all three matter because
+`cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings`,
+and `cargo test --locked --workspace` on Linux, macOS, and Windows — all three matter because
 config paths and permission handling are platform-sensitive. A green local
 `make check` means a green CI run.
 

@@ -497,15 +497,15 @@ impl PlaneClient {
         limit: usize,
     ) -> Result<Vec<WorkItem>, PlaneError> {
         let path = format!("/api/v1/workspaces/{}/work-items/search/", self.workspace);
-        let mut q: Vec<(&str, String)> = vec![
-            ("search", query.to_string()),
-            ("limit", limit.to_string()),
-        ];
+        let mut q: Vec<(&str, String)> =
+            vec![("search", query.to_string()), ("limit", limit.to_string())];
         if let Some(pid) = project_id {
             q.push(("workspace_search", "false".to_string()));
             q.push(("project_id", pid.to_string()));
         }
-        let raw: serde_json::Value = self.request_value(reqwest::Method::GET, &path, &q, None).await?;
+        let raw: serde_json::Value = self
+            .request_value(reqwest::Method::GET, &path, &q, None)
+            .await?;
         let items = match raw {
             serde_json::Value::Array(a) => a,
             serde_json::Value::Object(m) => match m.get("issues").and_then(|v| v.as_array()) {
@@ -526,7 +526,7 @@ impl PlaneClient {
                         message: format!(
                             "unexpected shape from {path}: expected an 'issues' array in the object, found {actual}"
                         ),
-                    })
+                    });
                 }
             },
             _ => {
@@ -534,7 +534,7 @@ impl PlaneClient {
                     message: format!(
                         "unexpected shape from {path}: expected an array or an 'issues' object"
                     ),
-                })
+                });
             }
         };
         serde_json::from_value(serde_json::Value::Array(items)).map_err(|e| PlaneError::Api {
@@ -1407,8 +1407,17 @@ fn is_sensitive_key(key: &str) -> bool {
 
 /// Substrings that hint a body may carry credentials and must not be echoed.
 const SENSITIVE_SUBSTRINGS: [&str; 11] = [
-    "api_key", "token", "password", "authorization", "secret", "passwd", "jwt", "bearer",
-    "secret_key", "access_token", "private_key",
+    "api_key",
+    "token",
+    "password",
+    "authorization",
+    "secret",
+    "passwd",
+    "jwt",
+    "bearer",
+    "secret_key",
+    "access_token",
+    "private_key",
 ];
 
 /// First 160 characters of a body for an error message, redacted when the head
@@ -1716,18 +1725,9 @@ mod http_tests {
         let m = server
             .mock("GET", "/api/v1/workspaces/ws/work-items/search/")
             .match_query(mockito::Matcher::AllOf(vec![
-                mockito::Matcher::UrlEncoded(
-                    "search".to_string(),
-                    "webhook".to_string(),
-                ),
-                mockito::Matcher::UrlEncoded(
-                    "workspace_search".to_string(),
-                    "false".to_string(),
-                ),
-                mockito::Matcher::UrlEncoded(
-                    "project_id".to_string(),
-                    "p1".to_string(),
-                ),
+                mockito::Matcher::UrlEncoded("search".to_string(), "webhook".to_string()),
+                mockito::Matcher::UrlEncoded("workspace_search".to_string(), "false".to_string()),
+                mockito::Matcher::UrlEncoded("project_id".to_string(), "p1".to_string()),
             ]))
             .with_status(200)
             .with_header("content-type", "application/json")

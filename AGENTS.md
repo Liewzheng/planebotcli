@@ -181,26 +181,22 @@ No PR is merged until `reng` (the local Rust Code Review Engine) has reviewed it
 has been answered on the PR. The gate runs through the `gh` CLI — if `gh` is missing or
 unauthenticated, stop and say so rather than driving the API by hand.
 
-0. **Self-review the branch before it becomes a PR.** Every branch gets a `reng` pass locally
-   right after its work is committed and *before* it is pushed — an earlier, cheaper review that
-   keeps known findings out of the PR. Local mode needs no PR and publishes nothing:
+**Self-review first.** Every branch gets a `reng` pass locally right after its work is
+committed and *before* it is pushed — an earlier, cheaper review that keeps known findings out
+of the PR. Local mode needs no PR and publishes nothing:
 
-   ```bash
-   RENG=$(command -v reng || echo ~/.local/bin/reng)
-   timeout 900 "$RENG" review --local-path . --base <base-branch> --head <current-branch>
-   ```
+```bash
+RENG=$(command -v reng || echo ~/.local/bin/reng)
+[ -x "$RENG" ] || { echo "reng not found at $RENG — install it or fix PATH, then retry" >&2; exit 1; }
+REPORT=$(timeout 900 "$RENG" review --local-path . --base <base-branch> --head <current-branch> 2>&1 \
+  | tail -1 | sed 's/^Report saved to //')
+jq -r '.consolidated.findings[]? | "[\(.severity)] \(.file):\(.line) — \(.title)"' "$REPORT"
+```
 
-   `--base` is the branch the work was cut from (usually `integration-main`); for a release or
-   sync PR use `--base <remote>/main` (e.g. `planebotcli/main`). The run prints a JSON tail and
-   writes the report under `~/.config/review-engine/reports/` — read the findings with:
-
-   ```bash
-   jq -r '.consolidated.findings[]? | "[\(.severity)] \(.file):\(.line) — \(.title)"' \
-     "$(ls -t ~/.config/review-engine/reports/*.json | head -1)"
-   ```
-
-   Fix what is real in the code before pushing; note the rest for the PR disposition. This does
-   **not** replace step 1 — the PR gate still runs and its findings still get answered.
+`--base` is the branch the work was cut from (usually `integration-main`); for a release or
+sync PR use `--base <remote>/main` (e.g. `planebotcli/main`). Fix what is real in the code
+before pushing and note the rest for the PR disposition. This does **not** replace step 1: the
+PR gate still runs and its findings still get answered there.
 
 1. **Trigger the review and publish it to the PR.** `<n>` is the PR number kept in step 4 above
    (`gh pr view --json number -q .number` prints it again). `reng` is usually not on `PATH`:

@@ -407,10 +407,10 @@ mod tests {
         path.push(format!("planebotcli_save_test_{}", std::process::id()));
         write_config_file(&path, "http://plane.example", "secret", "ws1").unwrap();
         let values = read_config_file_from(&path);
-        let permissions = std::fs::metadata(&path).unwrap().permissions();
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::metadata(&path).unwrap().permissions();
             assert_eq!(permissions.mode() & 0o777, 0o600);
         }
         std::fs::remove_file(&path).unwrap();

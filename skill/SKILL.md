@@ -18,7 +18,7 @@ fuzzy resolution, `--json` dual output, caching, markdown input and inline image
 Install / update the local binary from the release line after each release:
 
 ```bash
-cargo install --path <repo>/crates/planebotcli-cli --locked   # repo = integration-main checkout
+cargo install --path <repo>/crates/planebotcli-cli --locked   # repo = main checkout
 ```
 
 ## Key Concepts
@@ -31,12 +31,10 @@ cargo install --path <repo>/crates/planebotcli-cli --locked   # repo = integrati
 
 ## Setup & Authentication
 
-Installed from our release repo `github.com/Liewzheng/planebotcli`, which holds two
-long-lived branches: `integration-main` (the integration line where completed tasks
-accumulate) and `main` (the released line). The version and the changelog are edited on
-`integration-main`; `main` only advances through a PR from it. After each new release, reinstall by
-default — do not ask first:
-`cargo install --path crates/planebotcli-cli --locked` (run in the integration-main checkout;
+Installed from our release repo `github.com/Liewzheng/planebotcli`, whose single long-lived
+branch is `main` — completed tasks land there through PRs and releases are tagged there. After
+each new release, reinstall by default — do not ask first:
+`cargo install --path crates/planebotcli-cli --locked` (run in the main checkout;
 installs both `planebotcli` and `pbot` into `~/.cargo/bin`)
 
 Config precedence: CLI flags > env vars (`PLANE_BASE_URL`, `PLANE_API_KEY`, `PLANE_WORKSPACE`) > config file, discovered highest-priority-first from `~/.config/pbot/config.toml` (TOML), `~/.pbot`, `~/.planecli`, then `~/.plane_api` (key=value lines, chmod 600). `pbot configure` writes the active config file (the highest-priority existing one; `~/.plane_api` by default).
@@ -195,7 +193,7 @@ Chinese, like the existing task comments):
 - Close with a parenthetical of technical context: branch name in backticks (rendered as a code
   tag by pbot — the editor stores HTML and does not parse markdown, so the CLI converts
   `code` and fenced blocks itself), what the branch
-  contains, and where it landed (`已合入 integration-main`).
+  contains, and where it landed (`已合入 main`).
 - No `-` bullet lists, no restating what the links say, no filler. Multi-line bodies: write to a
   temp file and pass `--body "$(cat file)"`.
 
@@ -204,7 +202,7 @@ Full example:
 ```
 已完成：
 PR https://github.com/Liewzheng/planebotcli/pull/N
-（分支 `docs/planecli-47-repo-cleanup`，统一 planebotcli 命名 + skill 与 CLI 行为对齐，已合入 integration-main）
+（分支 `docs/planecli-47-repo-cleanup`，统一 planebotcli 命名 + skill 与 CLI 行为对齐，已合入 main）
 ```
 
 **Separate items with a blank line.** The comment body is plain text: a blank line starts a new
@@ -212,8 +210,8 @@ paragraph, a single newline only becomes a br tag. `1) ...\n2) ...` on adjacent 
 joined on the web UI — put an empty line between list items (write the body to a file with real
 blank lines, not a one-liner with `\n` escapes).
 
-**No upstream submission.** pbot / planebotcli are an independent distribution: fixes land on the
-`integration-main` line and are never opened as issues or pull requests against Plane upstream
+**No upstream submission.** pbot / planebotcli are an independent distribution: fixes land on
+`main` and are never opened as issues or pull requests against Plane upstream
 or any other repository. There is no upstream-survey step and no `已提交上游：` comment to write —
 a task that records a finished fix names the local branch and the merge that carried it.
 
@@ -255,7 +253,7 @@ the work is done and awaiting merge) in the same breath as `comment create`. Nev
 you just updated in Todo/Backlog.
 
 **Only the human closes a task.** Never set Done yourself. A task is complete only when the
-human says so, or when the work is merged onto the `integration-main` line. "I finished my
+human says so, or when the work is merged onto `main`. "I finished my
 part and pushed" tops out at In Progress — the same applies when correcting a state you set too
 eagerly.
 

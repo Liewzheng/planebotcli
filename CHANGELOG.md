@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   image verdict and writes nothing, exiting non-zero when an image is missing or
   its MIME is not allowed for pages.
 
+### Changed
+- The repository keeps a single long-lived branch, `main`: every task branch is cut from
+  and merged into it, a release is bumped and its `[Unreleased]` section renamed in the
+  release PR itself, and tags are placed on `main`. The former `integration-main`
+  integration line is retired.
+
 ## [1.2.0] - 2026-09-14
 
 ### Added

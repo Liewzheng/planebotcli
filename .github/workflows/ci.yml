@@ -1,6 +1,8 @@
 # CI: format, lint, and test every push to the long-lived branches and every
 # pull request. Mirrors the local `make check` gate (clippy -D warnings +
-# cargo test) so a green local run means a green CI run.
+# cargo test) so a green local run means a green CI run. Runs on all three
+# platforms cargo-dist ships for, since config paths and permission handling
+# are platform-sensitive.
 name: CI
 
 on:
@@ -8,13 +10,21 @@ on:
     branches: [main, integration-main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   check:
     name: fmt · clippy · test
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

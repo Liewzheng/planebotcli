@@ -774,6 +774,17 @@ pbot doc update <doc> [--title <title>] [--content <text> | --content-md <markdo
                 [-p <project>] [--dry-run] [--json]
 ```
 
+**Options**
+
+| Option | Description |
+|---|---|
+| `--title <title>` | New page title. |
+| `-c, --content <text>` | New content as plain text. |
+| `--content-md <markdown>` | New content as native markdown (image handling as in `doc create`). |
+| `--content-html <html>` | New content as raw HTML, stored verbatim. |
+| `-p, --project <name\|id>` | Project; omit for a workspace-level page. |
+| `--dry-run` | Report the target and every image verdict without writing anything; exits 5 when an image cannot be processed. |
+
 ### pbot doc archive
 
 Archive (trash) a page without deleting it. The page stays recoverable in the web UI trash.

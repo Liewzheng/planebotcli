@@ -771,6 +771,17 @@ pbot doc update <doc> [--title <title>] [--content <text> | --content-md <markdo
                 [-p <project>] [--dry-run] [--json]
 ```
 
+**选项**
+
+| 选项 | 说明 |
+|---|---|
+| `--title <title>` | 新的页面标题。 |
+| `-c, --content <text>` | 新内容（纯文本）。 |
+| `--content-md <markdown>` | 新内容（原生 markdown；图片处理同 `doc create`）。 |
+| `--content-html <html>` | 新内容（原样 HTML）。 |
+| `-p, --project <name\|id>` | 项目；省略则操作工作区级页面。 |
+| `--dry-run` | 只报告目标与每张图片判定，不做任何写入；图片不可处理时退出码 5。 |
+
 ### pbot doc archive
 
 归档（进回收站）页面，不删除；页面在 Web 回收站可恢复。

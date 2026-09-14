@@ -4288,6 +4288,17 @@ async fn upload_page_image(
     src: &str,
 ) -> Result<String, PlaneError> {
     let file = preflight_upload(src)?;
+    if !PAGE_IMAGE_MIMES.contains(&file.mime.as_str()) {
+        return Err(PlaneError::Validation {
+            message: format!(
+                "{} has MIME '{}' — page images must be one of {}.",
+                src,
+                file.mime,
+                PAGE_IMAGE_MIMES.join(", ")
+            ),
+            hint: Some("Convert the image (SVG is not accepted for pages).".into()),
+        });
+    }
     let created = client
         .register_page_asset(page_id, project_id, &file.name, &file.mime, file.size)
         .await?;
@@ -5911,6 +5922,36 @@ mod tests {
         let (report, errors) = render_image_report("target", &[]);
         assert_eq!(errors, 0);
         assert!(report.contains("(none)"), "{report}");
+    }
+
+    #[test]
+    fn dry_run_rejects_non_whitelisted_mime() {
+        let dir = std::env::temp_dir().join(format!("pbot_mime_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let svg = dir.join("a.svg");
+        std::fs::write(&svg, "<svg/>").unwrap();
+        let md = format!("![s]({})", svg.display());
+        let (report, errors) = render_image_report("t", &scan_md_images(&md));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(errors, 1);
+        assert!(
+            report.contains("MIME image/svg+xml is not allowed"),
+            "{report}"
+        );
+    }
+
+    #[test]
+    fn dry_run_reports_empty_alt_local_image() {
+        let dir = std::env::temp_dir().join(format!("pbot_alt_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("a.png");
+        std::fs::write(&png, "x").unwrap();
+        let md = format!("![]({})", png.display());
+        let (report, errors) = render_image_report("t", &scan_md_images(&md));
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(errors, 0);
+        assert!(report.contains("1 to upload"), "{report}");
+        assert!(report.contains("alt=\"\""), "{report}");
     }
 
     #[test]

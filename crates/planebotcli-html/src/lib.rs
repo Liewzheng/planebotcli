@@ -126,14 +126,27 @@ fn md_inline(text: &str) -> String {
     out
 }
 
+/// True when a URL carries a scheme that must never reach an `href`/`src`
+/// attribute (`javascript:`, `data:`, …). Relative paths and http(s) pass.
+fn is_dangerous_url(url: &str) -> bool {
+    let lower = url.trim_start().to_ascii_lowercase();
+    ["javascript:", "data:", "vbscript:", "file:"]
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
+}
+
 /// `![alt](src)` → `<img src="src" alt="alt"/>` (`alt` omitted when empty).
 /// The source is kept verbatim: a remote URL stays a URL for the browser to
-/// load, while a bare asset UUID is what the Plane editor resolves.
+/// load, while a bare asset UUID is what the Plane editor resolves. A URL with
+/// a dangerous scheme is left as literal text, never an attribute value.
 fn md_images(text: &str) -> String {
     let re = Regex::new(r"!\[([^\]]*)\]\(([^)\s]+)\)").unwrap();
     re.replace_all(text, |caps: &regex::Captures<'_>| {
         let alt = &caps[1];
         let src = &caps[2];
+        if is_dangerous_url(src) {
+            return caps[0].to_string();
+        }
         if alt.is_empty() {
             format!("<img src=\"{src}\"/>")
         } else {
@@ -144,12 +157,16 @@ fn md_images(text: &str) -> String {
 }
 
 /// `[text](url)` → `<a href="url">text</a>`; images were consumed first, so a
-/// leading `!` never survives into this pass.
+/// leading `!` never survives into this pass. A URL with a dangerous scheme is
+/// left as literal text.
 fn md_links(text: &str) -> String {
     let re = Regex::new(r"\[([^\]]+)\]\(([^)\s]+)\)").unwrap();
     re.replace_all(text, |caps: &regex::Captures<'_>| {
         let label = &caps[1];
         let url = &caps[2];
+        if is_dangerous_url(url) {
+            return caps[0].to_string();
+        }
         format!("<a href=\"{url}\">{label}</a>")
     })
     .to_string()
@@ -813,5 +830,19 @@ mod tests {
             md_to_html("[t](https://x.io/p)"),
             "<p><a href=\"https://x.io/p\">t</a></p>"
         );
+    }
+
+    #[test]
+    fn md_dangerous_schemes_stay_literal() {
+        // Never emit a javascript:/data: href or src.
+        assert_eq!(
+            md_to_html("[x](javascript:alert(1))"),
+            "<p>[x](javascript:alert(1))</p>"
+        );
+        assert_eq!(
+            md_to_html("![x](data:image/png;base64,AAAA)"),
+            "<p>![x](data:image/png;base64,AAAA)</p>"
+        );
+        assert!(!md_to_html("[x](JavaScript:alert(1))").contains("href"));
     }
 }

@@ -3,7 +3,7 @@
 mod render;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
@@ -710,7 +710,7 @@ pub enum DocCmd {
         #[arg(long, short = 'p')]
         project: Option<String>,
         /// Report what would be written (target, images, verdicts) and exit
-        /// without touching the server; non-zero when an image cannot be processed.
+        /// without touching the server; exits 5 when an image cannot be processed.
         #[arg(long)]
         dry_run: bool,
     },
@@ -736,7 +736,7 @@ pub enum DocCmd {
         #[arg(long, short = 'p')]
         project: Option<String>,
         /// Report what would be written (target, images, verdicts) and exit
-        /// without touching the server; non-zero when an image cannot be processed.
+        /// without touching the server; exits 5 when an image cannot be processed.
         #[arg(long)]
         dry_run: bool,
     },
@@ -4347,12 +4347,9 @@ fn replace_line_srcs(line: &str, uploaded: &HashMap<String, String>) -> String {
     let mut last = 0;
     for span in spans {
         out.push_str(&line[last..span.start]);
-        match classify_image_src(&span.src) {
-            ImageSource::Local(path) => match uploaded.get(&path) {
-                Some(asset_id) => out.push_str(&format!("![{}]({asset_id})", span.alt)),
-                None => out.push_str(&line[span.start..span.end]),
-            },
-            _ => out.push_str(&line[span.start..span.end]),
+        match uploaded.get(&span.src) {
+            Some(asset_id) => out.push_str(&format!("![{}]({asset_id})", span.alt)),
+            None => out.push_str(&line[span.start..span.end]),
         }
         last = span.end;
     }
@@ -4368,21 +4365,29 @@ async fn upload_md_images(
     project_id: Option<&str>,
     md: &str,
 ) -> Result<String, PlaneError> {
-    let mut uploaded: HashMap<String, String> = HashMap::new();
+    // Deduplicate by the resolved path so `./a.png` and `a.png` share one
+    // upload, but key the substitution map by the literal `src` text.
+    let mut by_real: HashMap<PathBuf, String> = HashMap::new();
+    let mut by_src: HashMap<String, String> = HashMap::new();
     for image in scan_md_images(md) {
         let ImageSource::Local(path) = classify_image_src(&image.src) else {
             continue;
         };
-        if uploaded.contains_key(&path) {
-            continue;
-        }
-        let asset_id = upload_page_image(client, page_id, project_id, &path).await?;
-        uploaded.insert(path, asset_id);
+        let real = std::fs::canonicalize(&path).unwrap_or_else(|_| PathBuf::from(&path));
+        let asset_id = match by_real.get(&real) {
+            Some(asset_id) => asset_id.clone(),
+            None => {
+                let asset_id = upload_page_image(client, page_id, project_id, &path).await?;
+                by_real.insert(real, asset_id.clone());
+                asset_id
+            }
+        };
+        by_src.insert(image.src.clone(), asset_id);
     }
-    if uploaded.is_empty() {
+    if by_src.is_empty() {
         Ok(md.to_string())
     } else {
-        Ok(substitute_image_srcs(md, &uploaded))
+        Ok(substitute_image_srcs(md, &by_src))
     }
 }
 

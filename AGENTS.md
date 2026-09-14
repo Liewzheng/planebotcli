@@ -153,18 +153,17 @@ small to track" or "too small for a PR" exemption.
    PR URL, and one line per review round summarising the `reng` findings and how each was answered),
    and at merge. Set the state to match reality: `In Progress` once work begins, `Done` only after
    the merge is on `main`. A finished change with no comment on its item is not done.
-3. **Branch per task**, off `integration-main`, named `<type>/<task>-<slug>` (e.g.
-   `feat/PLANECLI-42-relations-remove`). Never commit a task's work straight onto an integration or
-   release branch.
+3. **Branch per task**, off `main`, named `<type>/<task>-<slug>` (e.g.
+   `feat/PLANECLI-42-relations-remove`). Never commit a task's work straight onto the main branch.
 4. **Open a pull request — and stop there.** Push the branch to the `planebotcli` remote and open a
-   PR against `integration-main` (`gh pr create --repo Liewzheng/planebotcli --base
-   integration-main`). Keep the PR number it prints (`gh pr view --json number -q .number` retrieves
-   it) — the review gate needs it. Merging is the human's call, made after that gate.
+   PR against `main` (`gh pr create --repo Liewzheng/planebotcli --base main`). Keep the PR number it
+   prints (`gh pr view --json number -q .number` retrieves it) — the review gate needs it. Merging is
+   the human's call, made after that gate.
 5. **Never merge into a protected branch by hand.** `main`, `master`, and `dev` — on every remote,
    `planebotcli`'s `main` included — accept changes only through a merged PR. No
    `git push <remote> <branch>:main`, no `--force`, no local fast-forward that skips review.
-6. **Resync after every merge** — `git fetch planebotcli` and fast-forward `integration-main` — so
-   the next task branch starts from the merged state.
+6. **Resync after every merge** — `git fetch planebotcli` and fast-forward the local `main` — so the
+   next task branch starts from the merged state.
 7. **Record the change in `CHANGELOG.md` in the same PR.** Every change gets a Keep a Changelog
    entry under `## [Unreleased]` — code, docs, and repository process alike, no exemptions. A change
    that is reverted before release is edited out of its entry rather than answered by a second one.
@@ -180,6 +179,26 @@ small to track" or "too small for a PR" exemption.
 No PR is merged until `reng` (the local Rust Code Review Engine) has reviewed it and every finding
 has been answered on the PR. The gate runs through the `gh` CLI — if `gh` is missing or
 unauthenticated, stop and say so rather than driving the API by hand.
+
+**Self-review first.** Every branch gets a `reng` pass locally right after its work is
+committed and *before* it is pushed — an earlier, cheaper review that keeps known findings out
+of the PR. Local mode needs no PR and publishes nothing:
+
+```bash
+RENG=$(command -v reng || echo ~/.local/bin/reng)
+[ -x "$RENG" ] || { echo "reng not found at $RENG — install it or fix PATH, then retry" >&2; exit 1; }
+command -v jq >/dev/null || { echo "jq is not installed — it reads the review report" >&2; exit 1; }
+REPORT=$(timeout 900 "$RENG" review --local-path . --base <base-branch> --head <current-branch> \
+  2>&1 >/dev/null | sed -n 's/^Report saved to //p' | tail -1)
+[ -f "$REPORT" ] || { echo "reng produced no report — read its output above" >&2; exit 1; }
+jq -r '.consolidated.findings[]? | "[\(.severity)] \(.file):\(.line) — \(.title)"' "$REPORT"
+```
+
+`<base-branch>` is the branch the work was cut from (`main`);
+`<current-branch>` is the branch under review (`git branch --show-current`). Use
+`--base <remote>/main` (e.g. `planebotcli/main`) when `main` is not checked out locally. Fix what
+is real in the code before pushing and note the rest for the PR disposition. This does **not**
+replace step 1: the PR gate still runs and its findings still get answered there.
 
 1. **Trigger the review and publish it to the PR.** `<n>` is the PR number kept in step 4 above
    (`gh pr view --json number -q .number` prints it again). `reng` is usually not on `PATH`:
@@ -243,12 +262,12 @@ unauthenticated, stop and say so rather than driving the API by hand.
 
 ## Release management
 
-The repository `github.com/Liewzheng/planebotcli` holds two long-lived branches: `integration-main`
-(the integration line where completed tasks accumulate) and `main` (the released line, which only
-advances through a PR from `integration-main`). Since **1.0.0 (2026-09-09) the CLI is the Rust line**
+The repository `github.com/Liewzheng/planebotcli` keeps a single long-lived branch, `main` — the
+release line where every completed task lands through a PR and every release is tagged. Since
+**1.0.0 (2026-09-09) the CLI is the Rust line**
 (`planebotcli` / `pbot`, a Cargo workspace in `crates/`), and the Python line it replaced has since
 been removed. The version and the changelog are edited on
-`integration-main`, the branch tasks land on; there is no second repository they could be edited in
+`main`, the branch tasks land on; there is no second repository they could be edited in
 (see Identity).
 
 - Keep SemVer: bump the minor for new commands/flags, the patch for bug fixes. The single version
@@ -257,13 +276,12 @@ been removed. The version and the changelog are edited on
   never batched in at release time, when nobody remembers what shipped. Cut a release by renaming
   that section to `## [<version>] - YYYY-MM-DD`, in the file's existing Keep a Changelog style and
   without internal tracker IDs.
-- Cut a release by committing `release: <version>` on `integration-main`, pushing that branch, and
-  opening a PR from `integration-main` into the planebotcli remote's `main`:
-  `gh pr create --repo Liewzheng/planebotcli --base main --head integration-main`. A release PR goes
-  through the full review gate — the same `reng` run, the same 5-minute wait, the same per-finding
-  replies, no shortcut for docs or version bumps — and the **human merges it**. The released line
-  never takes a direct push and the agent never merges (see Task workflow).
-- After cutting a release, reinstall the local CLI from the merged `integration-main` checkout by
+- Cut a release in the release PR itself: a normal task branch (off `main`) that bumps
+  `[workspace.package] version` and renames `## [Unreleased]` to `## [<version>] - YYYY-MM-DD`.
+  It goes through the full review gate — the same `reng` run, the same 5-minute wait, the same
+  per-finding replies, no shortcut for docs or version bumps — and the **human merges it**. The
+  agent never merges and `main` never takes a direct push (see Task workflow).
+- After a release lands, reinstall the local CLI from the merged `main` checkout by
   default (no need to ask first): `cargo install --path crates/planebotcli-cli --locked`
   (installs both `planebotcli` and the `pbot` alias into `~/.cargo/bin`).
 - **Publishing artifacts** (needs the human's go-ahead + external accounts): tag the release and

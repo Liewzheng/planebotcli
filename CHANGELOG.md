@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- A local `reng` self-review step in `AGENTS.md`: every branch is reviewed
+  locally before it is pushed and opened as a PR, so findings are caught earlier.
+  The PR gate still runs afterwards.
+- `doc create` / `doc update --content-md` now handle images with no extra flags:
+  inline links `[text](url)` and images `![alt](src)` convert properly; a local
+  image path (relative or `file://`) is uploaded as a page asset and its source
+  is replaced with the asset id, while remote URLs and existing asset ids stay
+  as-is and fenced code is untouched. `--dry-run` prints the target and every
+  image verdict and writes nothing, exiting non-zero when an image is missing or
+  its MIME is not allowed for pages. Links and images with a `javascript:`,
+  `data:`, `vbscript:`, or `file:` URL are left as literal text, never written
+  into an `href`/`src` attribute.
+
+### Changed
+- The repository keeps a single long-lived branch, `main`: every task branch is cut from
+  and merged into it, a release is bumped and its `[Unreleased]` section renamed in the
+  release PR itself, and tags are placed on `main`. The former `integration-main`
+  integration line is retired.
+
 ## [1.2.0] - 2026-09-14
 
 ### Added

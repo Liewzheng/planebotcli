@@ -735,7 +735,7 @@ Create a document.
 
 ```
 pbot doc create --title <title> (--content <text> | --content-md <markdown> | --content-html <html>)
-                [-p <project>] [--json]
+                [-p <project>] [--dry-run] [--json]
 ```
 
 **Options**
@@ -744,17 +744,25 @@ pbot doc create --title <title> (--content <text> | --content-md <markdown> | --
 |---|---|
 | `--title <title>` | Page title (required). |
 | `-c, --content <text>` | Content as plain text, converted like comments (paragraphs, `code`, links). |
-| `--content-md <markdown>` | Content as native markdown (headings, lists, code, links). |
+| `--content-md <markdown>` | Content as native markdown (headings, lists, code, links, images). |
 | `--content-html <html>` | Content as raw HTML, stored verbatim (rich layout). |
 | `-p, --project <name\|id>` | Project; omit to create a workspace page. |
+| `--dry-run` | Report the target and every image verdict without writing anything; exits non-zero when an image is missing or its MIME is not allowed. |
 
 The three content inputs are mutually exclusive.
+
+**Images in `--content-md` need no extra flags.** A local path (`./a.png` or `file://…`)
+is uploaded as a page asset and its source is replaced with the asset id; a remote
+URL or an existing asset id is kept as-is. Images inside fenced code blocks are left
+alone. A missing file, an unreadable file, or a MIME outside
+`image/jpeg|png|webp|gif` fails the command (SVG is rejected by the server).
 
 **Examples**
 
 ```
 $ pbot doc create --title "Runbook" -p PLANECLI --content-md "$(cat runbook.md)" --json
 $ pbot doc create --title "Spec" -p PLANECLI --content-html "$(cat spec.html)" --json
+$ pbot doc create --title "Spec" -p PLANECLI --content-md "$(cat spec.md)" --dry-run
 ```
 
 ### pbot doc update
@@ -763,8 +771,19 @@ Update a document.
 
 ```
 pbot doc update <doc> [--title <title>] [--content <text> | --content-md <markdown> | --content-html <html>]
-                [-p <project>] [--json]
+                [-p <project>] [--dry-run] [--json]
 ```
+
+**Options**
+
+| Option | Description |
+|---|---|
+| `--title <title>` | New page title. |
+| `-c, --content <text>` | New content as plain text. |
+| `--content-md <markdown>` | New content as native markdown (image handling as in `doc create`). |
+| `--content-html <html>` | New content as raw HTML, stored verbatim. |
+| `-p, --project <name\|id>` | Project; omit for a workspace-level page. |
+| `--dry-run` | Report the target and every image verdict without writing anything; exits 5 when an image cannot be processed. |
 
 ### pbot doc archive
 

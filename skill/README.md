@@ -16,7 +16,7 @@
 1. **安装 pbot**（任一途径）：
 
    ```bash
-   # 从源码（integration-main 检出后）
+   # 从源码（main 检出后）
    cargo install --path crates/planebotcli-cli --locked
 
    # 或 GitHub Releases 直接下载/一键脚本

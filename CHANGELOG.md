@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-14
+
 ### Added
 - A `CHANGELOG.md` entry is required for every change, written in the same pull
   request that makes it, under this section (`AGENTS.md` rule 7).

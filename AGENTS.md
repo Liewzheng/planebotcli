@@ -188,6 +188,7 @@ of the PR. Local mode needs no PR and publishes nothing:
 ```bash
 RENG=$(command -v reng || echo ~/.local/bin/reng)
 [ -x "$RENG" ] || { echo "reng not found at $RENG — install it or fix PATH, then retry" >&2; exit 1; }
+command -v jq >/dev/null || { echo "jq is not installed — it reads the review report" >&2; exit 1; }
 REPORT=$(timeout 900 "$RENG" review --local-path . --base <base-branch> --head <current-branch> 2>&1 \
   | tail -1 | sed 's/^Report saved to //')
 jq -r '.consolidated.findings[]? | "[\(.severity)] \(.file):\(.line) — \(.title)"' "$REPORT"

@@ -101,16 +101,58 @@ pub fn body_to_html(body: &str) -> String {
 /// processed, mirroring the Python pass order.
 fn md_inline(text: &str) -> String {
     let escaped = html_escape::encode_quoted_attribute(text);
+    // Hold code spans in placeholders: images, links, emphasis, and linkify must
+    // not reach inside them, and their content is escaped exactly once.
     let code = Regex::new(r"`([^`\n]+)`").unwrap();
-    let with_code = code.replace_all(&escaped, "<code>$1</code>");
+    let mut spans: Vec<String> = Vec::new();
+    let held = code.replace_all(&escaped, |caps: &regex::Captures<'_>| {
+        spans.push(format!("<code>{}</code>", &caps[1]));
+        format!("\u{0}{}\u{0}", spans.len() - 1)
+    });
+    // Images before links: `![alt](src)` also contains `[alt](src)`.
+    let with_images = md_images(&held);
+    let with_links = md_links(&with_images);
     let bold = Regex::new(r"\*\*(.+?)\*\*|__(.+?)__").unwrap();
-    let with_bold = bold.replace_all(&with_code, |caps: &regex::Captures<'_>| {
+    let with_bold = bold.replace_all(&with_links, |caps: &regex::Captures<'_>| {
         let content = caps.get(1).or_else(|| caps.get(2)).expect("branch matched");
         format!("<strong>{}</strong>", content.as_str())
     });
     let with_em_star = em_star(&with_bold);
     let with_em_under = em_under(&with_em_star);
-    linkify(&with_em_under)
+    let mut out = linkify(&with_em_under);
+    for (i, span) in spans.iter().enumerate() {
+        out = out.replace(&format!("\u{0}{i}\u{0}"), span);
+    }
+    out
+}
+
+/// `![alt](src)` → `<img src="src" alt="alt"/>` (`alt` omitted when empty).
+/// The source is kept verbatim: a remote URL stays a URL for the browser to
+/// load, while a bare asset UUID is what the Plane editor resolves.
+fn md_images(text: &str) -> String {
+    let re = Regex::new(r"!\[([^\]]*)\]\(([^)\s]+)\)").unwrap();
+    re.replace_all(text, |caps: &regex::Captures<'_>| {
+        let alt = &caps[1];
+        let src = &caps[2];
+        if alt.is_empty() {
+            format!("<img src=\"{src}\"/>")
+        } else {
+            format!("<img src=\"{src}\" alt=\"{alt}\"/>")
+        }
+    })
+    .to_string()
+}
+
+/// `[text](url)` → `<a href="url">text</a>`; images were consumed first, so a
+/// leading `!` never survives into this pass.
+fn md_links(text: &str) -> String {
+    let re = Regex::new(r"\[([^\]]+)\]\(([^)\s]+)\)").unwrap();
+    re.replace_all(text, |caps: &regex::Captures<'_>| {
+        let label = &caps[1];
+        let url = &caps[2];
+        format!("<a href=\"{url}\">{label}</a>")
+    })
+    .to_string()
 }
 
 /// Emulate Python's `(?<!\*)\*([^*\n]+)\*(?!\*)` — the `regex` crate has no
@@ -706,5 +748,70 @@ mod tests {
     #[test]
     fn md_pipe_line_without_separator_is_paragraph() {
         assert_eq!(md_to_html("| just | text |"), "<p>| just | text |</p>");
+    }
+
+    #[test]
+    fn md_inline_link_is_converted() {
+        assert_eq!(
+            md_to_html("see [Radxa docs](https://docs.radxa.com/en) now"),
+            "<p>see <a href=\"https://docs.radxa.com/en\">Radxa docs</a> now</p>"
+        );
+    }
+
+    #[test]
+    fn md_image_remote_url_is_kept_as_src() {
+        assert_eq!(
+            md_to_html("![diagram](https://x.io/a.png)"),
+            "<p><img src=\"https://x.io/a.png\" alt=\"diagram\"/></p>"
+        );
+    }
+
+    #[test]
+    fn md_image_with_asset_uuid_and_empty_alt() {
+        assert_eq!(
+            md_to_html("![](11111111-2222-3333-4444-555555555555)"),
+            "<p><img src=\"11111111-2222-3333-4444-555555555555\"/></p>"
+        );
+    }
+
+    #[test]
+    fn md_image_takes_precedence_over_link() {
+        // The `[alt](src)` inside an image must not become an anchor.
+        assert_eq!(
+            md_to_html("![a](dir/b.png)"),
+            "<p><img src=\"dir/b.png\" alt=\"a\"/></p>"
+        );
+    }
+
+    #[test]
+    fn md_link_inside_code_span_is_literal() {
+        assert_eq!(
+            md_to_html("use `[x](https://y.io)` here"),
+            "<p>use <code>[x](https://y.io)</code> here</p>"
+        );
+    }
+
+    #[test]
+    fn md_fenced_code_image_is_not_converted() {
+        assert_eq!(
+            md_to_html("```\n![a](b.png)\n```"),
+            "<pre><code>![a](b.png)</code></pre>"
+        );
+    }
+
+    #[test]
+    fn md_link_with_emphasis_inside_label() {
+        assert_eq!(
+            md_to_html("[**bold** label](https://x.io)"),
+            "<p><a href=\"https://x.io\"><strong>bold</strong> label</a></p>"
+        );
+    }
+
+    #[test]
+    fn md_link_url_is_not_double_linkified() {
+        assert_eq!(
+            md_to_html("[t](https://x.io/p)"),
+            "<p><a href=\"https://x.io/p\">t</a></p>"
+        );
     }
 }

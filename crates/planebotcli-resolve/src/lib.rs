@@ -402,7 +402,9 @@ mod tests {
         }
     }
 
-    fn cands<'a>(items: &[&'a planebotcli_types::WorkItem]) -> Vec<(planebotcli_types::WorkItem, &'a str)> {
+    fn cands<'a>(
+        items: &[&'a planebotcli_types::WorkItem],
+    ) -> Vec<(planebotcli_types::WorkItem, &'a str)> {
         items.iter().map(|w| ((*w).clone(), "PLANE")).collect()
     }
 

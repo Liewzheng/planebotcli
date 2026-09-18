@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-18
+
 ### Added
 - A local `reng` self-review step in `AGENTS.md`: every branch is reviewed
   locally before it is pushed and opened as a PR, so findings are caught earlier.

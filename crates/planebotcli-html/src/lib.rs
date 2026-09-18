@@ -718,6 +718,17 @@ mod tests {
     }
 
     #[test]
+    fn url_with_embedded_quote_cannot_break_out_of_href() {
+        // The URL regex excludes `"`, so a malicious URL is truncated at the
+        // quote and the rest of the string is HTML-escaped by the surrounding
+        // text pass — no attribute breakout, no XSS via `onclick=...`.
+        let html = body_to_html(r#"click https://x.io/a" onclick="alert(1) here"#);
+        assert!(html.contains(r#"<a href="https://x.io/a">https://x.io/a</a>"#));
+        assert!(html.contains("&quot;"));
+        assert!(!html.contains(r#"onclick="alert"#));
+    }
+
+    #[test]
     fn md_escapes_user_text_in_heading() {
         assert_eq!(
             md_to_html("# <script>alert(1)</script>"),

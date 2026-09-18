@@ -14,6 +14,43 @@ as historical reference.
 
 ## Install
 
+Pre-built binaries and installers are published on the
+[Releases page](https://github.com/Liewzheng/planebotcli/releases). Pick whichever
+form fits your platform — the shell installer is the same artifact on Linux and
+macOS and is the fastest way to try the CLI; the GUI installers (`dmg` / `msi`)
+are there for users who want a double-click install.
+
+### macOS
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcli-installer.sh | sh
+```
+
+Or download a `.dmg` from the latest release page (Apple Silicon: `planebotcli-aarch64-apple-darwin.dmg`;
+Intel: `planebotcli-x86_64-apple-darwin.dmg`), open it, and drag `planebotcli` and `pbot` into a
+directory on your `$PATH` — common choices are `~/bin` (user-local, no sudo needed),
+`/opt/homebrew/bin` (Homebrew on Apple Silicon), or `/usr/local/bin` (system-wide; on newer
+macOS this directory may require `sudo` to write to).
+
+### Linux
+
+```sh
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcli-installer.sh | sh
+```
+
+### Windows
+
+```powershell
+irm https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcli-installer.ps1 | iex
+```
+
+Or download `planebotcli-x86_64-pc-windows-msvc.msi` from the latest release page and
+double-click to install through the standard Windows installer UI. (ARM64 Windows
+is not currently a release target — use the shell installer above if you're on
+such a device.)
+
+### From a checkout
+
 The CLI is not published to crates.io yet — install it from a checkout:
 
 ```bash

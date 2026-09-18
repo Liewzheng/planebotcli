@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-09-18
+
+### Changed
+- The release workflow now produces a drag-and-drop `.dmg` for each macOS target
+  (Apple Silicon and Intel), built by a `macos-latest` job using
+  `create-dmg` over the per-arch tarballs that `cargo-dist` already ships.
+  The `.dmg` includes `planebotcli`, `pbot`, and a short `INSTALL.txt` so
+  non-technical users can drag the binaries onto `/usr/local/bin` from Finder.
+- The release workflow now produces a `planebotcli-x86_64-pc-windows-msvc.msi`
+  double-click installer (cargo-dist's native `msi` builder). Windows users
+  who prefer the GUI path no longer have to extract a `.zip`.
+- `README.md` documents three install paths per platform (shell one-liner,
+  drag-and-drop `.dmg` / `.msi`, and `cargo install` from a checkout), so users
+  can pick whichever fits their workflow.
+
 ## [1.3.0] - 2026-09-18
 
 ### Added

@@ -179,7 +179,10 @@ pub struct LocatedWorkItem {
 }
 
 /// Match one query (UUID, full identifier `PROJ-123`, or name) against a list
-/// of (item, project identifier) candidates.
+/// of `(work_item, project_identifier)` candidates.
+///
+/// `project_identifier` is the project's string identifier (e.g. `PLANE`),
+/// the prefix composed with a work item's `sequence_id` to form `PROJ-N`.
 ///
 /// Two passes, with the first one looking only at exact id and identifier-plus-
 /// sequence matches. `sequence_id` is unique within a project, so any exact hit
@@ -239,6 +242,9 @@ fn match_work_item(
     None
 }
 
+/// Wrap a candidate `(item, project_identifier)` pair in a `LocatedWorkItem`,
+/// copying the project's UUID and identifier onto the result. Centralised so
+/// the two match passes and the fuzzy fallback all produce the same shape.
 fn make_located(item: &planebotcli_types::WorkItem, identifier: &str) -> LocatedWorkItem {
     LocatedWorkItem {
         item: item.clone(),

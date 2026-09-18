@@ -8,8 +8,17 @@ use regex::Regex;
 
 const URL_TRAIL: &str = ".,;:!?)]}。，；：！？）】、";
 
+/// Bracketing character for inline placeholders inside `body_to_html`. Chosen
+/// to be outside any character class the escape and linkify passes use, and
+/// past the end of `extract_code_blocks`'s `\u{0}` placeholders.
+const PLACEHOLDER_DELIM: char = '\u{1}';
+
 fn url_re() -> Regex {
     Regex::new(r"(https?://[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%]+)").unwrap()
+}
+
+fn inline_code_re() -> Regex {
+    Regex::new(r"`([^`\n]+)`").unwrap()
 }
 
 /// Turn bare http(s) URLs into anchors. URLs already inside an href attribute
@@ -45,8 +54,7 @@ pub fn linkify(text: &str) -> String {
 
 /// Convert `` `inline code` `` to a `<code>` tag with HTML-escaped content.
 pub fn inline_code(text: &str) -> String {
-    let re = Regex::new(r"`([^`\n]+)`").unwrap();
-    re.replace_all(text, |caps: &regex::Captures<'_>| {
+    inline_code_re().replace_all(text, |caps: &regex::Captures<'_>| {
         format!("<code>{}</code>", html_escape::encode_text(&caps[1]))
     })
     .to_string()
@@ -72,15 +80,17 @@ fn extract_code_blocks(text: &str) -> (String, Vec<String>) {
 ///
 /// User text is HTML-escaped — including any `<...>` tags pasted into a plain
 /// comment — so only the generated tags reach Plane verbatim. The escape runs
-/// after inline code spans and URLs are pulled into `\u{1}`-bracketed
+/// after inline code spans and URLs are pulled into `PLACEHOLDER_DELIM`-bracketed
 /// placeholders: code spans first so URL extraction cannot reach into them,
 /// then URLs so a literal `&` inside a query string survives as `&` in the
 /// rendered `href` instead of being mangled to `&amp;`.
 pub fn body_to_html(body: &str) -> String {
     let (text, blocks) = extract_code_blocks(body.trim());
-    let token_only = Regex::new(r"^\u{0}\d+\u{0}[ \t]*$").unwrap();
-    let code = Regex::new(r"`([^`\n]+)`").unwrap();
-    let url = Regex::new(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%]+").unwrap();
+    let token_only = Regex::new(&format!(
+        r"^{}\d+{}[ \t]*$",
+        '\u{0}', '\u{0}'
+    ))
+    .unwrap();
     let mut parts: Vec<String> = Vec::new();
     for raw in text.split("\n\n") {
         let para = raw.trim();
@@ -89,41 +99,40 @@ pub fn body_to_html(body: &str) -> String {
         }
         // 1. Inline code spans → placeholders so URL extraction can't see them.
         let mut code_contents: Vec<String> = Vec::new();
-        let code_held = code
+        let code_held = inline_code_re()
             .replace_all(para, |caps: &regex::Captures<'_>| {
                 code_contents.push(caps[1].to_string());
-                format!("\u{1}C{}\u{1}", code_contents.len() - 1)
+                placeholder("C", code_contents.len() - 1)
             })
             .to_string();
         // 2. Bare URLs → placeholders so the literal `&` in a query string
         //    survives the HTML escape below.
         let mut anchors: Vec<String> = Vec::new();
-        let url_held = url
+        let url_held = url_re()
             .replace_all(&code_held, |caps: &regex::Captures<'_>| {
-                let m = caps.get(0).expect("group 0 always present");
-                let full = m.as_str();
+                let full = caps.get(1).expect("capture group 1").as_str();
                 let url_str: String = full
                     .trim_end_matches(|c: char| URL_TRAIL.contains(c))
                     .to_string();
                 let trail = &full[url_str.len()..];
                 anchors.push(format!("<a href=\"{url_str}\">{url_str}</a>{trail}"));
-                format!("\u{1}U{}\u{1}", anchors.len() - 1)
+                placeholder("U", anchors.len() - 1)
             })
             .to_string();
-        // 3. Escape the surrounding text. Placeholders contain only `\u{1}`,
+        // 3. Escape the surrounding text. Placeholders contain only the delim,
         //    ASCII letters, and digits, so they pass through untouched.
         let escaped = html_escape::encode_quoted_attribute(&url_held);
         let mut converted = escaped.replace('\n', "<br/>");
         // 4. Restore code spans (their content gets escaped exactly once now).
         for (i, raw) in code_contents.iter().enumerate() {
             converted = converted.replace(
-                &format!("\u{1}C{i}\u{1}"),
+                &placeholder("C", i),
                 &format!("<code>{}</code>", html_escape::encode_text(raw)),
             );
         }
         // 5. Restore URLs last so the `href` keeps the raw `&`.
         for (i, fragment) in anchors.iter().enumerate() {
-            converted = converted.replace(&format!("\u{1}U{i}\u{1}"), fragment);
+            converted = converted.replace(&placeholder("U", i), fragment);
         }
         if token_only.is_match(para) {
             parts.push(converted);
@@ -133,9 +142,17 @@ pub fn body_to_html(body: &str) -> String {
     }
     let mut result = parts.concat();
     for (i, fragment) in blocks.iter().enumerate() {
-        result = result.replace(&format!("\u{0}{i}\u{0}"), fragment);
+        result = result.replace(&placeholder_raw(i), fragment);
     }
     result
+}
+
+fn placeholder(tag: &str, index: usize) -> String {
+    format!("{PLACEHOLDER_DELIM}{tag}{index}{PLACEHOLDER_DELIM}")
+}
+
+fn placeholder_raw(index: usize) -> String {
+    format!("{0}{1}{0}", '\u{0}', index)
 }
 
 /// Apply the inline markdown subset to one block of user text.
@@ -672,6 +689,32 @@ mod tests {
         assert!(html.starts_with("<p>&lt;img&gt;</p>"));
         assert!(html.contains("<pre><code>if a &lt; b</code></pre>"));
         assert!(!html.contains("<img>"));
+    }
+
+    #[test]
+    fn placeholder_restore_keeps_indices_when_mixing_code_and_urls() {
+        // Multiple inline code spans and URLs in one paragraph exercise the
+        // placeholder indexing across both phases.
+        let html = body_to_html(
+            "see `code1` and `code2` at https://a.io/x and https://b.io/y, end",
+        );
+        assert!(html.contains("<code>code1</code>"));
+        assert!(html.contains("<code>code2</code>"));
+        assert!(html.contains("<a href=\"https://a.io/x\">https://a.io/x</a>"));
+        assert!(html.contains("<a href=\"https://b.io/y\">https://b.io/y</a>"));
+        assert_eq!(
+            html,
+            "<p>see <code>code1</code> and <code>code2</code> at \
+             <a href=\"https://a.io/x\">https://a.io/x</a> and \
+             <a href=\"https://b.io/y\">https://b.io/y</a>, end</p>"
+        );
+    }
+
+    #[test]
+    fn angle_bracket_inside_inline_code_is_escaped() {
+        let html = body_to_html("see `<https://x.io>` here");
+        assert_eq!(html, "<p>see <code>&lt;https://x.io&gt;</code> here</p>");
+        assert!(!html.contains("<a href"));
     }
 
     #[test]

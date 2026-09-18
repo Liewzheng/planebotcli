@@ -27,8 +27,10 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/planebotcli/r
 ```
 
 Or download a `.dmg` from the latest release page (Apple Silicon: `planebotcli-aarch64-apple-darwin.dmg`;
-Intel: `planebotcli-x86_64-apple-darwin.dmg`), open it, and drag `planebotcli` and `pbot` into
-`/usr/local/bin` (or anywhere on your `$PATH`).
+Intel: `planebotcli-x86_64-apple-darwin.dmg`), open it, and drag `planebotcli` and `pbot` into a
+directory on your `$PATH` — common choices are `~/bin` (user-local, no sudo needed),
+`/opt/homebrew/bin` (Homebrew on Apple Silicon), or `/usr/local/bin` (system-wide; on newer
+macOS this directory may require `sudo` to write to).
 
 ### Linux
 

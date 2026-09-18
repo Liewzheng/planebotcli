@@ -211,14 +211,90 @@ jobs:
           path: |
             ${{ steps.cargo-dist.outputs.paths }}
             ${{ env.BUILD_MANIFEST_NAME }}
+
+  # Wrap each macOS tarball in a drag-and-drop .dmg. cargo-dist 0.32 doesn't
+  # generate dmg natively, so this job runs on a macOS runner and uses
+  # `create-dmg` (https://github.com/create-dmg/create-dmg).
+  build-mac-dmg:
+    needs:
+      - plan
+      - build-local-artifacts
+    if: ${{ needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload' }}
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-darwin
+          - x86_64-apple-darwin
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Fetch macOS artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: artifacts-build-local-${{ matrix.target }}
+          path: downloaded
+      - name: Extract tarball
+        run: |
+          set -euo pipefail
+          cd downloaded
+          tar -xJf "planebotcli-cli-${{ matrix.target }}.tar.xz"
+      - name: Stage dmg payload
+        run: |
+          set -euo pipefail
+          mkdir -p dmg-payload
+          mv "downloaded/planebotcli-cli-${{ matrix.target }}/planebotcli" dmg-payload/planebotcli
+          mv "downloaded/planebotcli-cli-${{ matrix.target }}/pbot" dmg-payload/pbot
+          cat > dmg-payload/INSTALL.txt <<'EOF'
+          planebotcli + pbot
+          ================
+
+          Drag `planebotcli` and `pbot` to /usr/local/bin
+          (or any directory on your $PATH).
+
+          Verify with:
+              $ planebotcli --version
+              planebotcli ${{ github.ref_name }}
+
+          Or use the shell installer instead:
+              curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcli-installer.sh | sh
+
+          Documentation: https://github.com/Liewzheng/planebotcli
+          EOF
+      - name: Install create-dmg
+        run: brew install create-dmg
+      - name: Build dmg
+        run: |
+          set -euo pipefail
+          create-dmg \
+            --volname "planebotcli ${{ github.ref_name }}" \
+            --window-pos 200 120 \
+            --window-size 600 320 \
+            --icon-size 80 \
+            --icon planebotcli 150 100 \
+            --hide-extension planebotcli \
+            --icon pbot 150 200 \
+            --hide-extension pbot \
+            --icon INSTALL.txt 150 280 \
+            --eula INSTALL.txt \
+            --no-internet-enable \
+            "planebotcli-${{ matrix.target }}.dmg" \
+            dmg-payload/
+      - name: Upload dmg artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-build-dmg-${{ matrix.target }}
+          path: planebotcli-${{ matrix.target }}.dmg
   # Determines if we should publish/announce
   host:
     needs:
       - plan
       - build-local-artifacts
       - build-global-artifacts
+      - build-mac-dmg
     # Only run if we're "publishing", and only if plan, local and global didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') && (needs.build-mac-dmg.result == 'skipped' || needs.build-mac-dmg.result == 'success') }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-22.04"

@@ -14,6 +14,13 @@ path = "src/main.rs"
 name = "pbot"
 path = "src/bin/pbot.rs"
 
+# WiX GUIDs for the `msi` installer (cargo-dist 0.32 plan step).
+# upgrade-guid identifies the product upgrade family across versions;
+# path-guid identifies the install path. Both are project-scoped.
+[package.metadata.wix]
+upgrade-guid = "{AE278A83-4BC4-453C-B730-9BB62BE087EA}"
+path-guid = "{A7B828B6-7B47-4769-9CD8-E42C1003CF78}"
+
 [dependencies]
 anyhow = { workspace = true }
 clap = { workspace = true }

@@ -57,10 +57,11 @@ pub fn linkify(text: &str) -> String {
 
 /// Convert `` `inline code` `` to a `<code>` tag with HTML-escaped content.
 pub fn inline_code(text: &str) -> String {
-    inline_code_re().replace_all(text, |caps: &regex::Captures<'_>| {
-        format!("<code>{}</code>", html_escape::encode_text(&caps[1]))
-    })
-    .to_string()
+    inline_code_re()
+        .replace_all(text, |caps: &regex::Captures<'_>| {
+            format!("<code>{}</code>", html_escape::encode_text(&caps[1]))
+        })
+        .to_string()
 }
 
 /// Pull fenced code blocks out of the text, replacing each with a placeholder
@@ -92,11 +93,7 @@ fn extract_code_blocks(text: &str) -> (String, Vec<String>) {
 /// `url_with_embedded_single_quote_cannot_break_out_of_href` lock this in.
 pub fn body_to_html(body: &str) -> String {
     let (text, blocks) = extract_code_blocks(body.trim());
-    let token_only = Regex::new(&format!(
-        r"^{}\d+{}[ \t]*$",
-        '\u{0}', '\u{0}'
-    ))
-    .unwrap();
+    let token_only = Regex::new(&format!(r"^{}\d+{}[ \t]*$", '\u{0}', '\u{0}')).unwrap();
     let mut parts: Vec<String> = Vec::new();
     for raw in text.split("\n\n") {
         let para = raw.trim();
@@ -708,9 +705,8 @@ mod tests {
     fn placeholder_restore_keeps_indices_when_mixing_code_and_urls() {
         // Multiple inline code spans and URLs in one paragraph exercise the
         // placeholder indexing across both phases.
-        let html = body_to_html(
-            "see `code1` and `code2` at https://a.io/x and https://b.io/y, end",
-        );
+        let html =
+            body_to_html("see `code1` and `code2` at https://a.io/x and https://b.io/y, end");
         assert!(html.contains("<code>code1</code>"));
         assert!(html.contains("<code>code2</code>"));
         assert!(html.contains("<a href=\"https://a.io/x\">https://a.io/x</a>"));

@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   injection vector for a malicious URL pasted into a plain-text body: the URL
   regex excludes both quote characters, so a URL cannot break out of the
   generated `href` attribute.
+- `wi show <short-id>` and any other work-item lookup now resolve by exact
+  `UUID` or `PROJ-N` before any substring-of-name check. The first pass
+  sweeps the full candidate list, so a task whose title happens to contain
+  the literal `PROJ-N` substring (e.g. `PLANE-3` matching a sentence that
+  mentions `PLANE-33`) can no longer hijack the lookup of `PLANE-3` when the
+  API returns that task earlier in the list. Substring and fuzzy matching keep
+  working when there is no exact hit.
 
 ### Changed
 - The repository keeps a single long-lived branch, `main`: every task branch is cut from

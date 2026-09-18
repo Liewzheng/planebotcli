@@ -180,13 +180,26 @@ pub struct LocatedWorkItem {
 
 /// Match one query (UUID, full identifier `PROJ-123`, or name) against a list
 /// of (item, project identifier) candidates.
+///
+/// Two passes, with the first one looking only at exact id and identifier-plus-
+/// sequence matches. `sequence_id` is unique within a project, so any exact hit
+/// in pass 1 is unambiguous and wins over later passes — this prevents a
+/// substring-of-name match on an unrelated item from hijacking a short
+/// identifier query (e.g. `PLANE-3` being silently returned when some task's
+/// title contains the literal `PLANE-3`). Pass 2 keeps the existing
+/// substring-then-fuzzy behaviour so callers relying on partial-name matching
+/// see no change.
 fn match_work_item(
     query: &str,
     candidates: &[(planebotcli_types::WorkItem, &str)],
 ) -> Option<LocatedWorkItem> {
     let lower = query.to_lowercase();
+    // Pass 1: exact UUID or `PROJ-N` match, scanning the whole list. Returning
+    // the first hit is safe because these identifiers are unique per project.
     for (item, identifier) in candidates {
-        let id_matches = item.id.eq_ignore_ascii_case(query);
+        if item.id.eq_ignore_ascii_case(query) {
+            return Some(make_located(item, identifier));
+        }
         let seq = item.sequence_id.as_ref().map(|v| match v {
             serde_json::Value::Number(n) => n.to_string(),
             serde_json::Value::String(s) => s.clone(),
@@ -195,33 +208,38 @@ fn match_work_item(
         let composed = seq
             .filter(|s| !s.is_empty() && !identifier.is_empty())
             .map(|s| format!("{identifier}-{s}"));
-        let seq_matches = composed
+        if composed
             .as_deref()
-            .map(|c| c.eq_ignore_ascii_case(query))
-            .unwrap_or(false);
-        let name = item.name.as_deref().unwrap_or("");
-        if id_matches || seq_matches || (!is_uuid(query) && name.to_lowercase().contains(&lower)) {
-            return Some(LocatedWorkItem {
-                item: item.clone(),
-                project_id: item.project.clone().unwrap_or_default(),
-                project_identifier: identifier.to_string(),
-            });
+            .is_some_and(|c| c.eq_ignore_ascii_case(query))
+        {
+            return Some(make_located(item, identifier));
         }
     }
-    // Fuzzy name match over all candidates.
+    // Pass 2: substring-on-name (preserved from before the fix so existing
+    // callers' UX is unchanged) and fuzzy fallback.
+    for (item, identifier) in candidates {
+        let name = item.name.as_deref().unwrap_or("");
+        if !is_uuid(query) && name.to_lowercase().contains(&lower) {
+            return Some(make_located(item, identifier));
+        }
+    }
     let with_names: Vec<(&planebotcli_types::WorkItem, &str, String)> = candidates
         .iter()
         .map(|(item, identifier)| (item, *identifier, item.name.clone().unwrap_or_default()))
         .collect();
     if let Some(m) = find_best_match(query, &with_names, |(_, _, name)| name.as_str()) {
         let (item, identifier, _) = m.item;
-        return Some(LocatedWorkItem {
-            item: (*item).clone(),
-            project_id: item.project.clone().unwrap_or_default(),
-            project_identifier: identifier.to_string(),
-        });
+        return Some(make_located(item, identifier));
     }
     None
+}
+
+fn make_located(item: &planebotcli_types::WorkItem, identifier: &str) -> LocatedWorkItem {
+    LocatedWorkItem {
+        item: item.clone(),
+        project_id: item.project.clone().unwrap_or_default(),
+        project_identifier: identifier.to_string(),
+    }
 }
 
 /// Locate a work item within a single project (from its work-item list).
@@ -350,5 +368,98 @@ mod tests {
         let projects = vec![proj("p-reng", "ReviewEngine", "RENG")];
         assert!(match_project("", &projects).is_none());
         assert!(match_project("   ", &projects).is_none());
+    }
+
+    fn wi(id: &str, name: &str, seq: u64) -> planebotcli_types::WorkItem {
+        planebotcli_types::WorkItem {
+            id: id.to_string(),
+            name: Some(name.to_string()),
+            sequence_id: Some(serde_json::Value::Number(seq.into())),
+            description_html: None,
+            priority: None,
+            state: None,
+            labels: None,
+            assignees: None,
+            parent: None,
+            start_date: None,
+            target_date: None,
+            created_at: None,
+            updated_at: None,
+            project: Some("p-plane".to_string()),
+            project_identifier: Some("PLANE".to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn seq_match_wins_over_name_substring_hijack() {
+        // PLANE-56's title contains the literal substring "PLANE-3" (from a
+        // sentence referencing "PLANE-33"); the old code returned PLANE-56 for
+        // query "PLANE-3" whenever the API returned it earlier in the list.
+        // The new pass-1 sweep finds PLANE-3 by exact sequence match first.
+        let wi3 = wi("i-3", "WebUI 配置 allowed_rate_limit", 3);
+        let wi56 = wi(
+            "i-56",
+            "根因定位：Pages 内容整篇复制膨胀为何复发（PLANE-33 修复后的漏网路径）",
+            56,
+        );
+        // Whichever order the API returns them, the query must land on wi3.
+        for order in [vec![&wi3, &wi56], vec![&wi56, &wi3]] {
+            let candidates: Vec<_> = order.iter().map(|w| ((*w).clone(), "PLANE")).collect();
+            let m = match_work_item("PLANE-3", &candidates).unwrap();
+            assert_eq!(m.item.id, "i-3", "order {order:?} hijacked PLANE-3");
+        }
+    }
+
+    #[test]
+    fn seq_match_wins_for_short_prefix_of_existing_seq() {
+        // Querying a short identifier that's a prefix of another item's seq
+        // (e.g. PLANE-3 vs PLANE-33) must still resolve to the exact item
+        // when present, even when the prefix-larger item appears earlier in
+        // the list.
+        let wi3 = wi("i-3", "Plain task", 3);
+        let wi33 = wi("i-33", "PLANE-3 hijack target", 33);
+        for order in [vec![&wi33, &wi3], vec![&wi3, &wi33]] {
+            let candidates: Vec<_> = order.iter().map(|w| ((*w).clone(), "PLANE")).collect();
+            let m = match_work_item("PLANE-3", &candidates).unwrap();
+            assert_eq!(m.item.id, "i-3", "order {order:?} hijacked PLANE-3");
+        }
+    }
+
+    #[test]
+    fn uuid_match_wins_over_name_substring() {
+        // If the user passes a UUID-shaped query that happens to appear as a
+        // substring in another item's name, the exact UUID match still wins.
+        let wi_uuid = wi("11111111-2222-3333-4444-555555555555", "Plain task", 5);
+        let wi_other = wi(
+            "i-other",
+            "see 11111111-2222-3333-4444-555555555555 in the docs",
+            7,
+        );
+        let candidates: Vec<_> = vec![&wi_other, &wi_uuid]
+            .into_iter()
+            .map(|w| (w.clone(), "PLANE"))
+            .collect();
+        let m = match_work_item("11111111-2222-3333-4444-555555555555", &candidates).unwrap();
+        assert_eq!(m.item.id, "11111111-2222-3333-4444-555555555555");
+    }
+
+    #[test]
+    fn substring_falls_through_when_no_exact_match() {
+        // No exact id/seq match for "login", but a task name does.
+        let wi = wi("i-login", "Login bug fix", 1);
+        let candidates: Vec<_> = vec![(wi, "PLANE")];
+        let m = match_work_item("login", &candidates).unwrap();
+        assert_eq!(m.item.id, "i-login");
+    }
+
+    #[test]
+    fn missing_short_id_does_not_hijack_via_name() {
+        // PLANE-999 is not in the project, but PLANE-56's title contains the
+        // substring "PLANE-9" via "PLANE-99". The old code would return
+        // PLANE-56; the new code returns None.
+        let wi56 = wi("i-56", "see PLANE-99 plans", 56);
+        let candidates: Vec<_> = vec![(wi56, "PLANE")];
+        assert!(match_work_item("PLANE-999", &candidates).is_none());
     }
 }

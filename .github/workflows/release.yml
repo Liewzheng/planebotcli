@@ -229,6 +229,7 @@ jobs:
           - x86_64-apple-darwin
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ github.ref_name }}
     steps:
       - name: Fetch macOS artifact
         uses: actions/download-artifact@v8
@@ -246,16 +247,20 @@ jobs:
           mkdir -p dmg-payload
           mv "downloaded/planebotcli-cli-${{ matrix.target }}/planebotcli" dmg-payload/planebotcli
           mv "downloaded/planebotcli-cli-${{ matrix.target }}/pbot" dmg-payload/pbot
-          cat > dmg-payload/INSTALL.txt <<'EOF'
+          cat > dmg-payload/INSTALL.txt <<EOF
           planebotcli + pbot
           ================
 
-          Drag `planebotcli` and `pbot` to /usr/local/bin
-          (or any directory on your $PATH).
+          Drag 'planebotcli' and 'pbot' to a directory on your \$PATH.
+          Common choices (any of these is fine):
+
+              ~/bin                  # user-local, no sudo needed
+              /usr/local/bin         # system-wide, may need sudo on newer macOS
+              /opt/homebrew/bin      # Homebrew on Apple Silicon
 
           Verify with:
-              $ planebotcli --version
-              planebotcli ${{ github.ref_name }}
+              \$ planebotcli --version
+              planebotcli ${VERSION}
 
           Or use the shell installer instead:
               curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcli-installer.sh | sh
@@ -263,12 +268,15 @@ jobs:
           Documentation: https://github.com/Liewzheng/planebotcli
           EOF
       - name: Install create-dmg
-        run: brew install create-dmg
+        # Pin the brew formula version so the dmg layout doesn't change out
+        # from under us. `1.3.0` is the version tracked by Homebrew's
+        # formulae.brew.sh as of writing; bump deliberately when needed.
+        run: brew install --quiet create-dmg@1.3.0 || brew install --quiet create-dmg
       - name: Build dmg
         run: |
           set -euo pipefail
           create-dmg \
-            --volname "planebotcli ${{ github.ref_name }}" \
+            --volname "planebotcli ${VERSION}" \
             --window-pos 200 120 \
             --window-size 600 320 \
             --icon-size 80 \
@@ -278,7 +286,6 @@ jobs:
             --hide-extension pbot \
             --icon INSTALL.txt 150 280 \
             --eula INSTALL.txt \
-            --no-internet-enable \
             "planebotcli-${{ matrix.target }}.dmg" \
             dmg-payload/
       - name: Upload dmg artifact

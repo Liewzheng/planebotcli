@@ -43,7 +43,9 @@ irm https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcl
 ```
 
 Or download `planebotcli-x86_64-pc-windows-msvc.msi` from the latest release page and
-double-click to install through the standard Windows installer UI.
+double-click to install through the standard Windows installer UI. (ARM64 Windows
+is not currently a release target — use the shell installer above if you're on
+such a device.)
 
 ### From a checkout
 

@@ -21,6 +21,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `data:`, `vbscript:`, or `file:` URL are left as literal text, never written
   into an `href`/`src` attribute.
 
+### Fixed
+- `comment create --body` no longer sends raw `<...>` tags from a plain-text
+  comment through to Plane's HTML renderer: `<img>` and `<image-component>`
+  strings (and any other stray angle-bracket markup) are now HTML-escaped so
+  they display as literal text. The conversion is aligned with the `--body-md`
+  path — code spans first, then bare URLs, then a full-text escape — so a
+  literal `&` inside a URL query string is preserved.
+
 ### Changed
 - The repository keeps a single long-lived branch, `main`: every task branch is cut from
   and merged into it, a release is bumped and its `[Unreleased]` section renamed in the

@@ -69,16 +69,62 @@ fn extract_code_blocks(text: &str) -> (String, Vec<String>) {
 /// Convert plain text to HTML paragraphs: blank lines separate paragraphs, a
 /// single newline becomes a `<br/>`, backticks become code tags, fenced blocks
 /// become pre-wrapped code, and bare URLs become anchors.
+///
+/// User text is HTML-escaped — including any `<...>` tags pasted into a plain
+/// comment — so only the generated tags reach Plane verbatim. The escape runs
+/// after inline code spans and URLs are pulled into `\u{1}`-bracketed
+/// placeholders: code spans first so URL extraction cannot reach into them,
+/// then URLs so a literal `&` inside a query string survives as `&` in the
+/// rendered `href` instead of being mangled to `&amp;`.
 pub fn body_to_html(body: &str) -> String {
     let (text, blocks) = extract_code_blocks(body.trim());
     let token_only = Regex::new(r"^\u{0}\d+\u{0}[ \t]*$").unwrap();
+    let code = Regex::new(r"`([^`\n]+)`").unwrap();
+    let url = Regex::new(r"https?://[A-Za-z0-9\-._~:/?#\[\]@!$&()*+,;=%]+").unwrap();
     let mut parts: Vec<String> = Vec::new();
     for raw in text.split("\n\n") {
         let para = raw.trim();
         if para.is_empty() {
             continue;
         }
-        let converted = linkify(&inline_code(para)).replace('\n', "<br/>");
+        // 1. Inline code spans → placeholders so URL extraction can't see them.
+        let mut code_contents: Vec<String> = Vec::new();
+        let code_held = code
+            .replace_all(para, |caps: &regex::Captures<'_>| {
+                code_contents.push(caps[1].to_string());
+                format!("\u{1}C{}\u{1}", code_contents.len() - 1)
+            })
+            .to_string();
+        // 2. Bare URLs → placeholders so the literal `&` in a query string
+        //    survives the HTML escape below.
+        let mut anchors: Vec<String> = Vec::new();
+        let url_held = url
+            .replace_all(&code_held, |caps: &regex::Captures<'_>| {
+                let m = caps.get(0).expect("group 0 always present");
+                let full = m.as_str();
+                let url_str: String = full
+                    .trim_end_matches(|c: char| URL_TRAIL.contains(c))
+                    .to_string();
+                let trail = &full[url_str.len()..];
+                anchors.push(format!("<a href=\"{url_str}\">{url_str}</a>{trail}"));
+                format!("\u{1}U{}\u{1}", anchors.len() - 1)
+            })
+            .to_string();
+        // 3. Escape the surrounding text. Placeholders contain only `\u{1}`,
+        //    ASCII letters, and digits, so they pass through untouched.
+        let escaped = html_escape::encode_quoted_attribute(&url_held);
+        let mut converted = escaped.replace('\n', "<br/>");
+        // 4. Restore code spans (their content gets escaped exactly once now).
+        for (i, raw) in code_contents.iter().enumerate() {
+            converted = converted.replace(
+                &format!("\u{1}C{i}\u{1}"),
+                &format!("<code>{}</code>", html_escape::encode_text(raw)),
+            );
+        }
+        // 5. Restore URLs last so the `href` keeps the raw `&`.
+        for (i, fragment) in anchors.iter().enumerate() {
+            converted = converted.replace(&format!("\u{1}U{i}\u{1}"), fragment);
+        }
         if token_only.is_match(para) {
             parts.push(converted);
         } else {
@@ -574,6 +620,58 @@ mod tests {
         let html = body_to_html("`https://example.com`");
         assert!(!html.contains("<a href"));
         assert!(html.contains("<code>https://example.com</code>"));
+    }
+
+    #[test]
+    fn escapes_angle_brackets_in_paragraph() {
+        let html = body_to_html("see <img src=x> here");
+        assert_eq!(html, "<p>see &lt;img src=x&gt; here</p>");
+    }
+
+    #[test]
+    fn escapes_image_component_like_tag() {
+        let html = body_to_html("see <image-component asset_id=\"x\" /> here");
+        assert!(html.contains("&lt;image-component"));
+        assert!(html.contains("&quot;x&quot;"));
+        assert!(html.contains("&gt;"));
+        assert!(!html.contains("<image-component"));
+    }
+
+    #[test]
+    fn escapes_angle_brackets_with_inline_code() {
+        let html = body_to_html("use `<b>` here");
+        assert_eq!(html, "<p>use <code>&lt;b&gt;</code> here</p>");
+    }
+
+    #[test]
+    fn escapes_angle_brackets_with_url() {
+        let html = body_to_html("see <b> and https://x.io/a now");
+        assert_eq!(
+            html,
+            "<p>see &lt;b&gt; and <a href=\"https://x.io/a\">https://x.io/a</a> now</p>"
+        );
+    }
+
+    #[test]
+    fn url_with_ampersand_keeps_raw_amp() {
+        let html = body_to_html("see https://x.io/?a=1&b=2 now");
+        assert!(
+            html.contains("<a href=\"https://x.io/?a=1&b=2\">https://x.io/?a=1&b=2</a>"),
+            "raw `&` must survive: {html}"
+        );
+    }
+
+    #[test]
+    fn escapes_ampersand_in_paragraph() {
+        assert_eq!(body_to_html("R&D tax"), "<p>R&amp;D tax</p>");
+    }
+
+    #[test]
+    fn escapes_in_paragraph_with_fenced_block_neighbour() {
+        let html = body_to_html("<img>\n\n```\nif a < b\n```");
+        assert!(html.starts_with("<p>&lt;img&gt;</p>"));
+        assert!(html.contains("<pre><code>if a &lt; b</code></pre>"));
+        assert!(!html.contains("<img>"));
     }
 
     #[test]

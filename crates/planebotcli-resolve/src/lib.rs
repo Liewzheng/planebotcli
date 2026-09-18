@@ -196,23 +196,28 @@ fn match_work_item(
     let lower = query.to_lowercase();
     // Pass 1: exact UUID or `PROJ-N` match, scanning the whole list. Returning
     // the first hit is safe because these identifiers are unique per project.
+    // A UUID-shaped query cannot match any `PROJ-N` composed sequence, so we
+    // skip the per-item sequence-id parse in that case.
+    let query_is_uuid = is_uuid(query);
     for (item, identifier) in candidates {
         if item.id.eq_ignore_ascii_case(query) {
             return Some(make_located(item, identifier));
         }
-        let seq = item.sequence_id.as_ref().map(|v| match v {
-            serde_json::Value::Number(n) => n.to_string(),
-            serde_json::Value::String(s) => s.clone(),
-            _ => String::new(),
-        });
-        let composed = seq
-            .filter(|s| !s.is_empty() && !identifier.is_empty())
-            .map(|s| format!("{identifier}-{s}"));
-        if composed
-            .as_deref()
-            .is_some_and(|c| c.eq_ignore_ascii_case(query))
-        {
-            return Some(make_located(item, identifier));
+        if !query_is_uuid {
+            let seq = item.sequence_id.as_ref().map(|v| match v {
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => s.clone(),
+                _ => String::new(),
+            });
+            let composed = seq
+                .filter(|s| !s.is_empty() && !identifier.is_empty())
+                .map(|s| format!("{identifier}-{s}"));
+            if composed
+                .as_deref()
+                .is_some_and(|c| c.eq_ignore_ascii_case(query))
+            {
+                return Some(make_located(item, identifier));
+            }
         }
     }
     // Pass 2: substring-on-name (preserved from before the fix so existing
@@ -391,6 +396,10 @@ mod tests {
         }
     }
 
+    fn cands<'a>(items: &[&'a planebotcli_types::WorkItem]) -> Vec<(planebotcli_types::WorkItem, &'a str)> {
+        items.iter().map(|w| ((*w).clone(), "PLANE")).collect()
+    }
+
     #[test]
     fn seq_match_wins_over_name_substring_hijack() {
         // PLANE-56's title contains the literal substring "PLANE-3" (from a
@@ -404,10 +413,10 @@ mod tests {
             56,
         );
         // Whichever order the API returns them, the query must land on wi3.
-        for order in [vec![&wi3, &wi56], vec![&wi56, &wi3]] {
-            let candidates: Vec<_> = order.iter().map(|w| ((*w).clone(), "PLANE")).collect();
+        for order in [&[&wi3, &wi56] as &[&_], &[&wi56, &wi3]] {
+            let candidates = cands(order);
             let m = match_work_item("PLANE-3", &candidates).unwrap();
-            assert_eq!(m.item.id, "i-3", "order {order:?} hijacked PLANE-3");
+            assert_eq!(m.item.id, "i-3", "PLANE-3 must win regardless of order");
         }
     }
 
@@ -419,10 +428,10 @@ mod tests {
         // the list.
         let wi3 = wi("i-3", "Plain task", 3);
         let wi33 = wi("i-33", "PLANE-3 hijack target", 33);
-        for order in [vec![&wi33, &wi3], vec![&wi3, &wi33]] {
-            let candidates: Vec<_> = order.iter().map(|w| ((*w).clone(), "PLANE")).collect();
+        for order in [&[&wi33, &wi3] as &[&_], &[&wi3, &wi33]] {
+            let candidates = cands(order);
             let m = match_work_item("PLANE-3", &candidates).unwrap();
-            assert_eq!(m.item.id, "i-3", "order {order:?} hijacked PLANE-3");
+            assert_eq!(m.item.id, "i-3", "PLANE-3 must win regardless of order");
         }
     }
 
@@ -436,10 +445,7 @@ mod tests {
             "see 11111111-2222-3333-4444-555555555555 in the docs",
             7,
         );
-        let candidates: Vec<_> = vec![&wi_other, &wi_uuid]
-            .into_iter()
-            .map(|w| (w.clone(), "PLANE"))
-            .collect();
+        let candidates = cands(&[&wi_other, &wi_uuid]);
         let m = match_work_item("11111111-2222-3333-4444-555555555555", &candidates).unwrap();
         assert_eq!(m.item.id, "11111111-2222-3333-4444-555555555555");
     }
@@ -448,7 +454,7 @@ mod tests {
     fn substring_falls_through_when_no_exact_match() {
         // No exact id/seq match for "login", but a task name does.
         let wi = wi("i-login", "Login bug fix", 1);
-        let candidates: Vec<_> = vec![(wi, "PLANE")];
+        let candidates = cands(&[&wi]);
         let m = match_work_item("login", &candidates).unwrap();
         assert_eq!(m.item.id, "i-login");
     }
@@ -459,7 +465,7 @@ mod tests {
         // substring "PLANE-9" via "PLANE-99". The old code would return
         // PLANE-56; the new code returns None.
         let wi56 = wi("i-56", "see PLANE-99 plans", 56);
-        let candidates: Vec<_> = vec![(wi56, "PLANE")];
+        let candidates = cands(&[&wi56]);
         assert!(match_work_item("PLANE-999", &candidates).is_none());
     }
 }

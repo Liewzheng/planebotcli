@@ -10,7 +10,10 @@ const URL_TRAIL: &str = ".,;:!?)]}。，；：！？）】、";
 
 /// Bracketing character for inline placeholders inside `body_to_html`. Chosen
 /// to be outside any character class the escape and linkify passes use, and
-/// past the end of `extract_code_blocks`'s `\u{0}` placeholders.
+/// past the end of `extract_code_blocks`'s `\u{0}` placeholders. Control
+/// characters like `\u{1}` are not typeable on a normal keyboard, so a
+/// collision with user input is extremely unlikely; even if it occurred the
+/// damage is limited to wrong text, not an escape bypass.
 const PLACEHOLDER_DELIM: char = '\u{1}';
 
 fn url_re() -> Regex {
@@ -83,7 +86,10 @@ fn extract_code_blocks(text: &str) -> (String, Vec<String>) {
 /// after inline code spans and URLs are pulled into `PLACEHOLDER_DELIM`-bracketed
 /// placeholders: code spans first so URL extraction cannot reach into them,
 /// then URLs so a literal `&` inside a query string survives as `&` in the
-/// rendered `href` instead of being mangled to `&amp;`.
+/// rendered `href` instead of being mangled to `&amp;`. The URL regex also
+/// excludes both quote characters, so a malicious URL cannot break out of the
+/// generated `href`; `url_with_embedded_quote_cannot_break_out_of_href` and
+/// `url_with_embedded_single_quote_cannot_break_out_of_href` lock this in.
 pub fn body_to_html(body: &str) -> String {
     let (text, blocks) = extract_code_blocks(body.trim());
     let token_only = Regex::new(&format!(
@@ -147,10 +153,17 @@ pub fn body_to_html(body: &str) -> String {
     result
 }
 
+/// Build an inline placeholder string used by `body_to_html`'s restore loop.
+/// `tag` distinguishes the two namespaces (`C` for code, `U` for URL); `index`
+/// is the position of the captured content in the matching `Vec`. The delim
+/// is chosen to be absent from any regex character class so placeholders
+/// survive the escape pass untouched.
 fn placeholder(tag: &str, index: usize) -> String {
     format!("{PLACEHOLDER_DELIM}{tag}{index}{PLACEHOLDER_DELIM}")
 }
 
+/// Build a fenced-code placeholder matching the format produced by
+/// `extract_code_blocks` (`\u{0}<index>\u{0}`).
 fn placeholder_raw(index: usize) -> String {
     format!("{0}{1}{0}", '\u{0}', index)
 }
@@ -726,6 +739,17 @@ mod tests {
         assert!(html.contains(r#"<a href="https://x.io/a">https://x.io/a</a>"#));
         assert!(html.contains("&quot;"));
         assert!(!html.contains(r#"onclick="alert"#));
+    }
+
+    #[test]
+    fn url_with_embedded_single_quote_cannot_break_out_of_href() {
+        // The URL regex excludes `'` as well, so a malicious URL is truncated
+        // at the single quote and the rest is escaped — no XSS via
+        // single-quoted handlers either.
+        let html = body_to_html("click https://x.io/a' onclick='alert(1) here");
+        assert!(html.contains(r#"<a href="https://x.io/a">https://x.io/a</a>"#));
+        assert!(html.contains("&#x27;"));
+        assert!(!html.contains(r#"onclick='alert"#));
     }
 
     #[test]

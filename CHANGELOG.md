@@ -27,7 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   strings (and any other stray angle-bracket markup) are now HTML-escaped so
   they display as literal text. The conversion is aligned with the `--body-md`
   path — code spans first, then bare URLs, then a full-text escape — so a
-  literal `&` inside a URL query string is preserved.
+  literal `&` inside a URL query string is preserved. Also closes an HTML
+  injection vector for a malicious URL pasted into a plain-text body: the URL
+  regex excludes both quote characters, so a URL cannot break out of the
+  generated `href` attribute.
 
 ### Changed
 - The repository keeps a single long-lived branch, `main`: every task branch is cut from

@@ -274,12 +274,11 @@ jobs:
           Documentation: https://github.com/Liewzheng/planebotcli
           EOF
       - name: Install create-dmg
-        # Pin the brew formula version so the dmg layout doesn't change out
-        # from under us. `1.3.0` is the version tracked by Homebrew's
-        # formulae.brew.sh as of writing; bump deliberately when needed.
-        # No fallback: if the pinned version disappears, fail loudly so
-        # we notice rather than silently picking up an arbitrary latest.
-        run: brew install --quiet create-dmg@1.3.0
+        # Homebrew formulae don't support @version pinning, so this pulls
+        # the current stable (formulae.brew.sh lists 1.3.0 at the time
+        # of writing). If the major version ever moves, the dmg layout
+        # may change and the next release run will catch it.
+        run: brew install --quiet create-dmg
       - name: Build dmg
         run: |
           set -euo pipefail

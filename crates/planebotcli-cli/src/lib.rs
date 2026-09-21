@@ -21,6 +21,7 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use planebotcli_cache::Cache;
+use regex::Regex;
 use planebotcli_client::{PageScope, PlaneClient};
 use planebotcli_core::{PlaneError, config_file_path, load_config, save_config};
 use planebotcli_format::{output_json, output_table};
@@ -1590,12 +1591,12 @@ fn cmd_skill_show(json: bool) -> Result<(), PlaneError> {
         });
         println!("{}", payload);
     } else {
-        print!("{}", SKILL_MD);
-        // include_str! doesn't always; guarantee a trailing newline so
-        // `pbot skill show | pbcopy` pastes cleanly into a chat box.
-        if !SKILL_MD.ends_with('\n') {
-            println!();
-        }
+        // `include_str!` preserves the file's exact bytes; SKILL.md already
+        // ends with a trailing newline so `pbot skill show | pbcopy`
+        // produces a clean paste. No conditional newline fix-up here —
+        // adding one would risk a double newline if the source ever
+        // gains one.
+        print!("{SKILL_MD}");
     }
     Ok(())
 }
@@ -1615,23 +1616,28 @@ fn cmd_skill_version() -> Result<(), PlaneError> {
     Ok(())
 }
 
-/// Parse the `version: "X.Y.Z"` line from the YAML frontmatter. The skill
-/// frontmatter is single-line `version: "X.Y.Z"` under `metadata:` (indent
-/// 2 spaces); match exactly that shape so a future format change
-/// (e.g. moving `version` to the top level) fails loudly here rather than
-/// silently returning the wrong string.
+/// Regex that anchors to a line that is *exactly* `version:` (with optional
+/// leading whitespace, then either whitespace or end-of-line / value).
+/// Crucially, `^version:` rejects `software_version:` and any other
+/// longer key that happens to end in `version:`. Returns the value with
+/// one layer of single/double quotes stripped and the rest trimmed.
 fn skill_version() -> String {
-    let line = SKILL_MD
-        .lines()
-        .find(|l| l.trim_start().starts_with("version:"))
-        .unwrap_or("");
-    // After `version:`, accept either single- or double-quoted values
-    // (YAML allows both) and trim trailing whitespace / comments.
-    line.trim_start()
-        .trim_start_matches("version:")
-        .trim()
-        .trim_end_matches(|c: char| c == '"' || c == '\'' || c.is_whitespace())
-        .to_string()
+    // (?m) multi-line; ^ after optional leading whitespace; the value
+    // is a semver-ish identifier (digit-letter-dot-dash-plus) optionally
+    // wrapped in one pair of matching quotes.
+    let re = Regex::new(
+        r#"(?m)^[[:space:]]*version:[[:space:]]*(?:"([^"]+)"|'([^']+)'|([^[:space:]]+))[[:space:]]*$"#,
+    )
+    .expect("regex literal is valid");
+    let caps = re
+        .captures(SKILL_MD)
+        .expect("skill/SKILL.md must contain a `version:` field in frontmatter");
+    // One of the three capture groups is Some; the others are None.
+    caps.get(1)
+        .or_else(|| caps.get(2))
+        .or_else(|| caps.get(3))
+        .map(|m| m.as_str().to_string())
+        .expect("at least one capture group matched")
 }
 
 /// required. A missing field prints an error and exits 1 (Python behavior).

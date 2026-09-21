@@ -820,6 +820,7 @@ dependencies = [
  "planebotcli-html",
  "planebotcli-resolve",
  "planebotcli-types",
+ "regex",
  "serde_json",
  "tokio",
 ]

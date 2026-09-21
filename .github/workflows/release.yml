@@ -300,13 +300,11 @@ jobs:
           name: artifacts-build-dmg-${{ matrix.target }}
           path: planebotcli-${{ matrix.target }}.dmg
 
-  # Build the Windows MSI installer. cargo-dist 0.32's plan step requires
-  # WiX upgrade-guid / path-guid in planebotcli-cli's Cargo.toml but
-  # does not detect them under our workspace layout (the planebotcli
-  # workspace has [package] sections in transitive deps that confuse the
-  # parser). Rather than pin one to a cargo-dist version that might fix
-  # it, this job drives cargo-wix directly: install it, run it on
-  # planebotcli-cli, upload the .msi as an artifact the host job picks up.
+  # Build the Windows MSI installer via cargo-wix (cargo-dist 0.32's
+  # WiX-key detection does not pick up the GUIDs in planebotcli-cli's
+  # Cargo.toml under our workspace layout; running cargo-wix directly
+  # sidesteps that). The .msi lands on the GitHub release alongside
+  # cargo-dist's other installers.
   build-windows-msi:
     needs:
       - plan
@@ -324,13 +322,36 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Cache cargo registry
-        uses: Swatinem/rust-cache@v2
+      - name: Cache cargo-wix
+        # Pin the cargo-wix version so a future breaking change on
+        # crates.io can't silently break the release pipeline. Cache the
+        # installed binary by version + runner OS so subsequent runs skip
+        # the from-source compile (which is several minutes on windows-latest).
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-wix.exe
+          key: cargo-wix-0.3.9-windows-${{ runner.os }}
       - name: Install cargo-wix
-        run: cargo install cargo-wix --locked
+        # Pinned to 0.3.9 (latest stable on crates.io). If this version is
+        # ever yanked, fail loudly rather than silently fall back to a
+        # newer version with potential breaking changes.
+        run: |
+          if [ ! -x ~/.cargo/bin/cargo-wix.exe ]; then
+            cargo install cargo-wix --version 0.3.9 --locked
+          fi
       - name: Generate MSI
         run: |
           cargo wix --package planebotcli-cli --output msi --nocapture
+      - name: Verify MSI was produced
+        # cargo-wix exits 0 even when its output path is empty / different
+        # from the expected glob (e.g. after a future flag change). Fail
+        # loudly here rather than uploading nothing in the next step.
+        run: |
+          if [ -z "$(ls msi/*.msi 2>/dev/null)" ]; then
+            echo "::error::cargo wix produced no .msi file under msi/"
+            exit 1
+          fi
+          ls -la msi/
       - name: Upload msi artifact
         uses: actions/upload-artifact@v7
         with:

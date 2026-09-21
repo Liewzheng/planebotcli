@@ -45,13 +45,10 @@ irm https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcl
 ```
 
 Or download `planebotcli-x86_64-pc-windows-msvc.msi` from the latest release page and
-double-click to install through the standard Windows installer UI (built via
-`cargo-wix` directly; cargo-dist 0.32's WiX-key detection on planebotcli's
-workspace layout doesn't pick up the GUIDs we set, so the MSI is built by a
-dedicated `build-windows-msi` job in `.github/workflows/release.yml`). As a
-fallback, download `planebotcli-x86_64-pc-windows-msvc.zip` and unzip it somewhere
-on your `%PATH%`. ARM64 Windows is not currently a release target — use the shell
-installer if you're on such a device.
+double-click to install through the standard Windows installer UI. As an
+alternative, download `planebotcli-x86_64-pc-windows-msvc.zip` and unzip it
+somewhere on your `%PATH%`. ARM64 Windows is not currently a release target —
+use the shell installer if you're on such a device.
 
 ### From a checkout
 

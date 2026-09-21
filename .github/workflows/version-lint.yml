@@ -29,7 +29,15 @@ jobs:
       - name: Read workspace.package.version
         id: pkg
         run: |
-          VERSION=$(grep -E '^version = ' Cargo.toml | head -n1 | sed -E 's/^version = "([^"]+)".*/\1/')
+          # Scope to the `[workspace.package]` section so a stray
+          # `[package].version` or a `version = "x.y.z"` inside
+          # `[workspace.dependencies]` cannot be picked up by accident.
+          VERSION=$(awk '
+            /^\[workspace\.package\]/ { found = 1; next }
+            found && /^\[/             { found = 0 }
+            found && /^version = /     { print; exit }
+          ' Cargo.toml \
+            | sed -E 's/^version = "([^"]+)".*/\1/')
           if [ -z "$VERSION" ]; then
             echo "::error::could not parse workspace.package.version from Cargo.toml"
             exit 1
@@ -40,11 +48,12 @@ jobs:
         run: |
           # The frontmatter is the YAML block between the first two `---`
           # lines; extract the `version:` field. The field is indented under
-          # `metadata:` so its line begins with whitespace.
+          # `metadata:` so its line begins with whitespace; accept either
+          # single- or double-quoted values (both are valid YAML).
           VERSION=$(awk '/^---$/{c++; next} c==1{print}' skill/SKILL.md \
             | grep -E '^[[:space:]]*version:' \
             | head -n1 \
-            | sed -E 's/^[[:space:]]*version:[[:space:]]+"?([^"]+)"?[[:space:]]*$/\1/')
+            | sed -E "s/^[[:space:]]*version:[[:space:]]+['\"]?([^'\"]+)['\"]?[[:space:]]*$/\1/")
           if [ -z "$VERSION" ]; then
             echo "::error::could not parse frontmatter version from skill/SKILL.md"
             echo "    expected: --- ... version: \"X.Y.Z\" ... ---"

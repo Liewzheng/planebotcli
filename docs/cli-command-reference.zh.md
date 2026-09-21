@@ -745,7 +745,7 @@ pbot doc create --title <title>
 |---|---|
 | `--title <title>` | 页面标题（必填）。 |
 | `-c, --content <markdown>` | 内容（Markdown：标题 / 列表 / 代码 / 加粗斜体 / 链接 / 图片，转 HTML）。与 `--content-md` 等价。**v1.4.0 起 BREAKING**：`# 标题` 现在被渲染为 `<h1>标题</h1>` 而不是字面文本；想要旧版纯文本行为请用 `--content-raw`。 |
-| `--content-md <markdown>` | 内容（Markdown，与 `--content` 等价）。图片处理与旧版 `--content-md` 一致。 |
+| `--content-md <markdown>` | 与 `--content` 等价（同一条 markdown → HTML 路径）。 |
 | `--content-raw <text>` | 内容（纯文本：空行分段，单换行变 `<br/>`；`#`、`-`、`*`、`[ ]` 等 markdown 字符当字面）。即 v1.3.x 的 `--content` 行为。 |
 | `--content-html <html>` | 内容（原样 HTML，存原文，适合富排版）。 |
 | `-p, --project <name\|id>` | 项目；省略则创建到工作区级页面。 |

@@ -745,7 +745,7 @@ pbot doc create --title <title>
 |---|---|
 | `--title <title>` | Page title (required). |
 | `-c, --content <markdown>` | Content as Markdown (headings, lists, code, bold/italic, links, images — converted to HTML). Alias of `--content-md`. **BREAKING from v1.3.x**: a `# heading` line is now rendered as `<h1>heading</h1>` instead of literal text; pass `--content-raw` to keep the old plain-text behaviour. |
-| `--content-md <markdown>` | Content as Markdown (alias of `--content`). Image handling is the same as `--content-md` in earlier releases. |
+| `--content-md <markdown>` | Alias of `--content`; same path (markdown → HTML). |
 | `--content-raw <text>` | Content as plain text: blank lines separate paragraphs, single newlines become `<br/>`. Markdown syntax (`#`, `-`, `*`, `[ ]`) is treated literally. This is what `--content` did before v1.4.0. |
 | `--content-html <html>` | Content as raw HTML, stored verbatim (rich layout). |
 | `-p, --project <name\|id>` | Project; omit to create a workspace page. |

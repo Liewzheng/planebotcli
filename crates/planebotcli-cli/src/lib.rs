@@ -4439,7 +4439,9 @@ fn doc_description(
     .count();
     if given > 1 {
         return Err(PlaneError::Validation {
-            message: "Pass the page content via only one of --content, --content-raw or --content-html.".into(),
+            message:
+                "Pass the page content via only one of --content, --content-raw or --content-html."
+                    .into(),
             hint: Some(
                 "--content (alias --content-md) is for Markdown; \
                  --content-raw is for plain text (v1.3.x --content behaviour); \

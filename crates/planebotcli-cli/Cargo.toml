@@ -18,6 +18,7 @@ path = "src/bin/pbot.rs"
 anyhow = { workspace = true }
 clap = { workspace = true }
 planebotcli-cache = { path = "../planebotcli-cache" }
+regex = { workspace = true }
 planebotcli-client = { path = "../planebotcli-client" }
 planebotcli-core = { path = "../planebotcli-core" }
 planebotcli-format = { path = "../planebotcli-format" }

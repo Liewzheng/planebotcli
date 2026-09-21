@@ -2,12 +2,26 @@
 
 mod render;
 
+/// `skill/SKILL.md` at the repo root, embedded into the binary at compile
+/// time. The relative path `../../skill/SKILL.md` resolves from
+/// `crates/planebotcli-cli/src/lib.rs` up to the workspace root and back
+/// down into `skill/`. The `build.rs` in this crate emits
+/// `cargo:rerun-if-changed` so any change to the source skill rebuilds the
+/// binary.
+pub const SKILL_MD: &str = include_str!("../../../skill/SKILL.md");
+
+/// Path of the skill source relative to the repo root. Used by `pbot skill path`
+/// and `pbot skill install` so the printed / written path matches what a
+/// reader sees in the repo.
+const SKILL_MD_REPO_PATH: &str = "skill/SKILL.md";
+
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use planebotcli_cache::Cache;
+use regex::Regex;
 use planebotcli_client::{PageScope, PlaneClient};
 use planebotcli_core::{PlaneError, config_file_path, load_config, save_config};
 use planebotcli_format::{output_json, output_table};
@@ -130,6 +144,32 @@ pub enum Command {
         #[command(subcommand)]
         command: CacheCmd,
     },
+    /// Print the AI skill bundled with this build (KimiCode / Claude Code / Cursor
+    /// all consume this same file from planebotcli's `skill/SKILL.md`).
+    Skill {
+        #[command(subcommand)]
+        command: SkillCmd,
+    },
+}
+
+/// Subcommands of `pbot skill`. The vendored SKILL.md is embedded at compile
+/// time via `include_str!("../../skill/SKILL.md")` — that path is relative
+/// to this file (`crates/planebotcli-cli/src/lib.rs`) and resolves to
+/// `skill/SKILL.md` at the repo root. The build script reruns the build when
+/// the file changes, so bumping `skill/SKILL.md` (or its frontmatter
+/// `version`) rebuilds the binary.
+#[derive(Subcommand)]
+pub enum SkillCmd {
+    /// Print the bundled `skill/SKILL.md` to stdout.
+    Show {
+        /// Emit a one-line JSON summary instead of the raw SKILL.md text.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the path of the vendored `skill/SKILL.md` (relative to the repo).
+    Path,
+    /// Print the frontmatter `version:` field of the vendored SKILL.md.
+    Version,
 }
 
 #[derive(Subcommand)]
@@ -950,6 +990,9 @@ pub enum WiCmd {
 }
 
 /// Run the parsed CLI and return the first error (mapped to an exit code).
+/// `planebotcli` and the `pbot` alias share this entry point. Both binaries
+/// (`planebotcli/src/main.rs`, `planebotcli/src/bin/pbot.rs`) are thin
+/// `Cli::parse()` → `run` wrappers.
 pub async fn run(cli: Cli) -> Result<(), PlaneError> {
     // `configure` is fully offline: it must not require an existing config
     // file or a client, so it dispatches before config loading.
@@ -1523,6 +1566,11 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 Ok(())
             }
         },
+        Command::Skill { command } => match command {
+            SkillCmd::Show { json } => cmd_skill_show(json),
+            SkillCmd::Path => cmd_skill_path(),
+            SkillCmd::Version => cmd_skill_version(),
+        },
     }
 }
 
@@ -1531,6 +1579,67 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
 /// Prompts for the base URL, API key, and workspace slug, saves them to
 /// `~/.plane_api` (chmod 600), then clears the disk cache (it may hold data
 /// from a different instance). Fully offline — no existing config or client
+/// Print the bundled `skill/SKILL.md` to stdout. With `--json`, emit a
+/// one-line summary `{ version, path, skill_md }` so callers (skill-install
+/// scripts, CI verifiers) can parse it without scanning the whole file.
+fn cmd_skill_show(json: bool) -> Result<(), PlaneError> {
+    if json {
+        let payload = serde_json::json!({
+            "version": skill_version(),
+            "path": SKILL_MD_REPO_PATH,
+            "skill_md": SKILL_MD,
+        });
+        println!("{}", payload);
+    } else {
+        // `include_str!` preserves the file's exact bytes; SKILL.md already
+        // ends with a trailing newline so `pbot skill show | pbcopy`
+        // produces a clean paste. No conditional newline fix-up here —
+        // adding one would risk a double newline if the source ever
+        // gains one.
+        print!("{SKILL_MD}");
+    }
+    Ok(())
+}
+
+/// Print the repo-relative path of the vendored `skill/SKILL.md`.
+fn cmd_skill_path() -> Result<(), PlaneError> {
+    println!("{SKILL_MD_REPO_PATH}");
+    Ok(())
+}
+
+/// Print the frontmatter `version:` field of the vendored SKILL.md. The
+/// lint at `.github/workflows/version-lint.yml` keeps this aligned with
+/// `workspace.package.version`; if the printed value differs from
+/// `pbot --version`, the build is stale.
+fn cmd_skill_version() -> Result<(), PlaneError> {
+    println!("{}", skill_version());
+    Ok(())
+}
+
+/// Regex that anchors to a line that is *exactly* `version:` (with optional
+/// leading whitespace, then either whitespace or end-of-line / value).
+/// Crucially, `^version:` rejects `software_version:` and any other
+/// longer key that happens to end in `version:`. Returns the value with
+/// one layer of single/double quotes stripped and the rest trimmed.
+fn skill_version() -> String {
+    // (?m) multi-line; ^ after optional leading whitespace; the value
+    // is a semver-ish identifier (digit-letter-dot-dash-plus) optionally
+    // wrapped in one pair of matching quotes.
+    let re = Regex::new(
+        r#"(?m)^[[:space:]]*version:[[:space:]]*(?:"([^"]+)"|'([^']+)'|([^[:space:]]+))[[:space:]]*$"#,
+    )
+    .expect("regex literal is valid");
+    let caps = re
+        .captures(SKILL_MD)
+        .expect("skill/SKILL.md must contain a `version:` field in frontmatter");
+    // One of the three capture groups is Some; the others are None.
+    caps.get(1)
+        .or_else(|| caps.get(2))
+        .or_else(|| caps.get(3))
+        .map(|m| m.as_str().to_string())
+        .expect("at least one capture group matched")
+}
+
 /// required. A missing field prints an error and exits 1 (Python behavior).
 fn cmd_configure() -> Result<(), PlaneError> {
     let base_url = configure_prompt("Plane base URL (e.g. https://api.plane.so): ");

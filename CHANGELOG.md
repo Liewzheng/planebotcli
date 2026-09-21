@@ -7,12 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-21
+
+### Changed
+- **BREAKING** `pbot doc create/update --content` now accepts Markdown (headings, lists, code, links, images) and converts it to HTML — the same path `--content-md` takes. The two flags are clap-level aliases (clap rejects passing both at parse time). A `# heading` line that previously rendered as the literal text `# heading` now becomes `<h1>heading</h1>`. Pass `--content-raw` to keep the v1.3.x plain-text behaviour (paragraphs from blank lines, single newlines become `<br/>`, markdown syntax literal).
+
 ### Added
-- `AGENTS.md` task-workflow rule 8: `skill/SKILL.md` frontmatter `version` must equal `workspace.package.version` for every change that ships CLI surface; the doc is the contract an AI agent reads before answering anything else, so a stale version tells it the doc matches a CLI it doesn't have. Pure-process / pure-build commits still bump `version` so a release that only touches `AGENTS.md` / workflows doesn't trip the lint.
+- `pbot doc create/update --content-raw <text>` — the v1.3.x plain-text behaviour, kept under a new flag name so the old use cases keep working.
+- `AGENTS.md` task-workflow rule 8: `skill/SKILL.md` frontmatter `version` must equal `workspace.package.version` for every change that ships CLI surface; the doc is the contract an AI agent reads before answering anything else, so a stale version tells them the doc matches a CLI they don't actually have. Pure-process / pure-build commits still bump `version` so a release that only touches `AGENTS.md` / workflows doesn't trip the lint.
 - `.github/workflows/version-lint.yml`: a pure-grep CI lint that fails any PR where `skill/SKILL.md` frontmatter `version` drifts from `Cargo.toml`'s `workspace.package.version`. Runs on every push to `main` and every pull request, parallel to the existing `CI` workflow. Catches drift at PR time instead of waiting for a release PR.
 
 ### Fixed
 - `skill/SKILL.md` frontmatter `version` was `2.0` (a stale skill-internal counter); corrected to `1.3.1` to match the current CLI version, and added a visible top-of-doc callout so any AI loading a future stale copy is told to re-sync instead of trusting the body.
+
+### Removed
+- (nothing)
 
 ## [1.3.1] - 2026-09-18
 

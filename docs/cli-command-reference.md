@@ -734,7 +734,8 @@ Create a document.
 **Aliases** `new`
 
 ```
-pbot doc create --title <title> (--content <text> | --content-md <markdown> | --content-html <html>)
+pbot doc create --title <title>
+                (--content <markdown> | --content-md <markdown> | --content-raw <text> | --content-html <html>)
                 [-p <project>] [--dry-run] [--json]
 ```
 
@@ -743,24 +744,26 @@ pbot doc create --title <title> (--content <text> | --content-md <markdown> | --
 | Option | Description |
 |---|---|
 | `--title <title>` | Page title (required). |
-| `-c, --content <text>` | Content as plain text, converted like comments (paragraphs, `code`, links). |
-| `--content-md <markdown>` | Content as native markdown (headings, lists, code, links, images). |
+| `-c, --content <markdown>` | Content as Markdown (headings, lists, code, bold/italic, links, images — converted to HTML). Alias of `--content-md`. **BREAKING from v1.3.x**: a `# heading` line is now rendered as `<h1>heading</h1>` instead of literal text; pass `--content-raw` to keep the old plain-text behaviour. |
+| `--content-md <markdown>` | Content as Markdown (alias of `--content`). Image handling is the same as `--content-md` in earlier releases. |
+| `--content-raw <text>` | Content as plain text: blank lines separate paragraphs, single newlines become `<br/>`. Markdown syntax (`#`, `-`, `*`, `[ ]`) is treated literally. This is what `--content` did before v1.4.0. |
 | `--content-html <html>` | Content as raw HTML, stored verbatim (rich layout). |
 | `-p, --project <name\|id>` | Project; omit to create a workspace page. |
 | `--dry-run` | Report the target and every image verdict without writing anything; exits non-zero when an image is missing or its MIME is not allowed. |
 
-The three content inputs are mutually exclusive.
+The four content inputs are mutually exclusive.
 
-**Images in `--content-md` need no extra flags.** A local path (`./a.png` or `file://…`)
-is uploaded as a page asset and its source is replaced with the asset id; a remote
-URL or an existing asset id is kept as-is. Images inside fenced code blocks are left
-alone. A missing file, an unreadable file, or a MIME outside
-`image/jpeg|png|webp|gif` fails the command (SVG is rejected by the server).
+**Images in `--content` / `--content-md` need no extra flags.** A local path
+(`./a.png` or `file://…`) is uploaded as a page asset and its source is replaced
+with the asset id; a remote URL or an existing asset id is kept as-is. Images inside
+fenced code blocks are left alone. A missing file, an unreadable file, or a MIME
+outside `image/jpeg|png|webp|gif` fails the command (SVG is rejected by the server).
 
 **Examples**
 
 ```
 $ pbot doc create --title "Runbook" -p PLANECLI --content-md "$(cat runbook.md)" --json
+$ pbot doc create --title "Plain note" -p PLANECLI --content-raw "see # heading" --json
 $ pbot doc create --title "Spec" -p PLANECLI --content-html "$(cat spec.html)" --json
 $ pbot doc create --title "Spec" -p PLANECLI --content-md "$(cat spec.md)" --dry-run
 ```
@@ -770,8 +773,9 @@ $ pbot doc create --title "Spec" -p PLANECLI --content-md "$(cat spec.md)" --dry
 Update a document.
 
 ```
-pbot doc update <doc> [--title <title>] [--content <text> | --content-md <markdown> | --content-html <html>]
-                [-p <project>] [--dry-run] [--json]
+pbot doc update <doc> [--title <title>]
+                     [--content <markdown> | --content-md <markdown> | --content-raw <text> | --content-html <html>]
+                     [-p <project>] [--dry-run] [--json]
 ```
 
 **Options**
@@ -779,8 +783,9 @@ pbot doc update <doc> [--title <title>] [--content <text> | --content-md <markdo
 | Option | Description |
 |---|---|
 | `--title <title>` | New page title. |
-| `-c, --content <text>` | New content as plain text. |
-| `--content-md <markdown>` | New content as native markdown (image handling as in `doc create`). |
+| `-c, --content <markdown>` | New content as Markdown (alias of `--content-md`). Same BREAKING behaviour as `doc create --content`. |
+| `--content-md <markdown>` | New content as Markdown (image handling as in `doc create`). |
+| `--content-raw <text>` | New content as plain text (the v1.3.x `--content` behaviour). |
 | `--content-html <html>` | New content as raw HTML, stored verbatim. |
 | `-p, --project <name\|id>` | Project; omit for a workspace-level page. |
 | `--dry-run` | Report the target and every image verdict without writing anything; exits 5 when an image cannot be processed. |

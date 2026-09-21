@@ -4,16 +4,16 @@ description: "Manage Plane.so through the pbot / planebotcli CLI — work items,
 allowed-tools: Bash(pbot *, planebotcli *)
 metadata:
   author: planebotcli maintainers
-  version: "1.3.1"
+  version: "1.4.0"
 ---
 
 # pbot — PlanebotCLI
 
-> **Skill version: 1.3.1 — must match `pbot --version`.** A stale skill is
+> **Skill version: 1.4.0 — must match `pbot --version`.** A stale skill is
 > worse than no skill: every command and flag listed below may have been
 > added, renamed or removed since this was written. Before answering any
 > `pbot …` question, verify the version with `pbot --version`. If it differs
-> from `1.3.1`, this document is stale:
+> from `1.4.0`, this document is stale:
 >
 > - End users: run `cargo install planebotcli --locked` (or use the
 >   prebuilt installer from the Releases page) to upgrade, then re-ask.
@@ -175,8 +175,11 @@ pbot state create "In Review" -p "Project" --group started --color "#FFA500" --j
 # Documents
 pbot doc ls -p "Project" --json
 pbot doc create --title "Spec" --content "Plain text, `code`, https://links" -p "Project" --json
-# --content converts like comments (paragraphs/code/links) — NOT a markdown engine.
-# Rich layout needs HTML; doc delete archives the page first, then deletes.
+# --content is Markdown by default (headings/lists/code/links/images → HTML);
+# pass --content-md to spell out the same path, or --content-raw if the body
+# must stay literal plain text (paragraphs from blank lines, single newlines
+# become <br/>, `# heading` stays text). --content-html stores HTML verbatim
+# for rich layout. doc delete archives the page first, then deletes.
 
 # Comments
 pbot comment ls ABC-123 --json

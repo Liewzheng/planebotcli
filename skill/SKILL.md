@@ -4,10 +4,26 @@ description: "Manage Plane.so through the pbot / planebotcli CLI — work items,
 allowed-tools: Bash(pbot *, planebotcli *)
 metadata:
   author: planebotcli maintainers
-  version: "2.0"
+  version: "1.3.1"
 ---
 
 # pbot — PlanebotCLI
+
+> **Skill version: 1.3.1 — must match `pbot --version`.** A stale skill is
+> worse than no skill: every command and flag listed below may have been
+> added, renamed or removed since this was written. Before answering any
+> `pbot …` question, verify the version with `pbot --version`. If it differs
+> from `1.3.1`, this document is stale:
+>
+> - End users: run `cargo install planebotcli --locked` (or use the
+>   prebuilt installer from the Releases page) to upgrade, then re-ask.
+> - Repo contributors / agents working against a checkout: run
+>   `cargo install --path crates/planebotcli-cli --locked` from the repo root.
+>
+> The repo's CI lint (`.github/workflows/version-lint.yml`) fails any PR
+> that lets this document drift from `Cargo.toml`'s
+> `workspace.package.version`, so a synced copy should always exist on
+> `main`.
 
 **The command is `pbot`** (short alias of the full binary `planebotcli`) — a single
 static binary installed at `~/.cargo/bin` (both `pbot` and `planebotcli` are

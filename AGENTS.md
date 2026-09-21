@@ -171,6 +171,16 @@ small to track" or "too small for a PR" exemption.
    flag, a repository-process change says what the process now is, and neither restates what
    `AGENTS.md` already explains in full. Keep internal tracker IDs out (the Plane item is the trace,
    the changelog is for readers).
+8. **Keep `skill/SKILL.md` in sync with the CLI in the same PR.** The frontmatter `version:` field on
+   `SKILL.md` must equal `workspace.package.version` in `Cargo.toml` for every release. AI agents load
+   the skill's frontmatter before answering anything else; a stale `version` tells them the doc matches a
+   CLI they don't actually have. Every change that ships to users (a new command, a flag, a renamed
+   option, a removed command, a behaviour change) updates `SKILL.md` in the same PR: bump the
+   frontmatter `version`, add/refresh the relevant `## …` section or example, and re-run
+   `pbot --help` / `pbot <cmd> --help` to confirm the examples still match. CI enforces this — the
+   `version-lint` workflow fails the PR if `SKILL.md` and `Cargo.toml` drift. Pure-process or
+   pure-build changes that don't ship any CLI surface still bump the skill's `version` so a release
+   commit that only touches `AGENTS.md` / workflows doesn't trip the lint.
 
 ### Review gate
 

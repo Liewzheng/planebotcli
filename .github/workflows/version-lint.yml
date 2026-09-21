@@ -1,0 +1,68 @@
+# Lint: skill/SKILL.md frontmatter `version` must equal `Cargo.toml`'s
+# `workspace.package.version`. AGENTS.md task-workflow rule 8 requires every
+# PR that ships CLI surface (or any release commit that touches the build)
+# to keep the skill's frontmatter `version` aligned with the binary's; this
+# workflow enforces it on every push to `main` and every PR, so the
+# enforcement is cheap and parallel to the main CI gate. The lint is pure
+# grep — no cargo / rustup needed — so it adds seconds, not minutes.
+name: version-lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: version-lint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: skill version == workspace.package.version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read workspace.package.version
+        id: pkg
+        run: |
+          VERSION=$(grep -E '^version = ' Cargo.toml | head -n1 | sed -E 's/^version = "([^"]+)".*/\1/')
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not parse workspace.package.version from Cargo.toml"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Read skill/SKILL.md frontmatter version
+        id: skill
+        run: |
+          # The frontmatter is the YAML block between the first two `---`
+          # lines; extract the `version:` field. The field is indented under
+          # `metadata:` so its line begins with whitespace.
+          VERSION=$(awk '/^---$/{c++; next} c==1{print}' skill/SKILL.md \
+            | grep -E '^[[:space:]]*version:' \
+            | head -n1 \
+            | sed -E 's/^[[:space:]]*version:[[:space:]]+"?([^"]+)"?[[:space:]]*$/\1/')
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not parse frontmatter version from skill/SKILL.md"
+            echo "    expected: --- ... version: \"X.Y.Z\" ... ---"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      - name: Fail on drift
+        if: steps.pkg.outputs.version != steps.skill.outputs.version
+        run: |
+          echo "::error::skill/SKILL.md frontmatter version is stale"
+          echo "    workspace.package.version = ${{ steps.pkg.outputs.version }}"
+          echo "    skill/SKILL.md          = ${{ steps.skill.outputs.version }}"
+          echo
+          echo "AGENTS.md rule 8 requires every CLI change to bump the skill"
+          echo "frontmatter version in the same PR. See:"
+          echo "    https://github.com/Liewzheng/planebotcli/blob/main/AGENTS.md#task-workflow"
+          exit 1
+      - name: OK
+        if: steps.pkg.outputs.version == steps.skill.outputs.version
+        run: |
+          echo "skill version matches workspace.package.version (${{ steps.pkg.outputs.version }})"

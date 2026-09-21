@@ -20,6 +20,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   The MSI artefact lands on the GitHub release alongside the other
   cargo-dist installers; README's Windows section is restored to link
   to `planebotcli-x86_64-pc-windows-msvc.msi`.
+- The v1.4.2 release's first `Release` workflow run errored on
+  windows-latest with `ParserError: Missing '(' after 'if'` —
+  the default shell on `windows-latest` is PowerShell, which doesn't
+  parse `if [ … ]; then … fi`. Three steps in `build-windows-msi`
+  (`Install cargo-wix`, `Generate MSI`, `Verify MSI was produced`)
+  now declare `shell: bash` explicitly so the bash conditionals
+  parse correctly. **Post-merge housekeeping**: the v1.4.2 tag
+  currently sits at the broken commit; once this PR is merged,
+  re-tag `v1.4.2` against the new `main` HEAD (`git tag -d v1.4.2
+  && git tag v1.4.2 && git push planebotcli :refs/tags/v1.4.2
+  v1.4.2`) so the `Release` workflow re-runs against the fixed
+  workflow.
 
 ## [1.4.0] - 2026-09-21
 

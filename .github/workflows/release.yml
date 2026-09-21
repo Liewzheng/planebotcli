@@ -335,17 +335,23 @@ jobs:
         # Pinned to 0.3.9 (latest stable on crates.io). If this version is
         # ever yanked, fail loudly rather than silently fall back to a
         # newer version with potential breaking changes.
+        # `shell: bash` is required because the default shell on
+        # windows-latest is PowerShell, which doesn't parse `if [ … ]`.
+        shell: bash
         run: |
           if [ ! -x ~/.cargo/bin/cargo-wix.exe ]; then
             cargo install cargo-wix --version 0.3.9 --locked
           fi
       - name: Generate MSI
+        # Same bash requirement as the install step above.
+        shell: bash
         run: |
           cargo wix --package planebotcli-cli --output msi --nocapture
       - name: Verify MSI was produced
         # cargo-wix exits 0 even when its output path is empty / different
         # from the expected glob (e.g. after a future flag change). Fail
         # loudly here rather than uploading nothing in the next step.
+        shell: bash
         run: |
           if [ -z "$(ls msi/*.msi 2>/dev/null)" ]; then
             echo "::error::cargo wix produced no .msi file under msi/"

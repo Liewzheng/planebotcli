@@ -695,15 +695,23 @@ pub enum DocCmd {
         /// Document title.
         #[arg(long)]
         title: String,
-        /// Document content (plain text, converted to HTML).
-        #[arg(long, short = 'c')]
+        /// Document content as Markdown (headings, lists, code blocks,
+        /// bold/italic, links, images — converted to HTML). The flag
+        /// `--content-md` is an alias and routes through the same path;
+        /// clap rejects passing both. BREAKING from v1.3.x: markdown
+        /// syntax (# - * [ ] !) is now interpreted. For pre-formatted plain
+        /// text, use --content-raw.
+        #[arg(long, short = 'c', alias = "content-md")]
         content: Option<String>,
-        /// Content written in native markdown (headings, lists, code, bold/italic,
-        /// links) — converted to HTML. Mutually exclusive with --content.
+        /// Document content as plain text: blank lines separate paragraphs,
+        /// single newlines become `<br/>`. Markdown syntax is treated
+        /// literally (a `# heading` line stays the text "# heading"). This
+        /// is what `--content` did before v1.4.0.
         #[arg(long)]
-        content_md: Option<String>,
+        content_raw: Option<String>,
         /// Content as raw HTML, stored verbatim (rich layout). Mutually
-        /// exclusive with --content and --content-md.
+        /// exclusive with --content (and its alias --content-md) and
+        /// --content-raw.
         #[arg(long)]
         content_html: Option<String>,
         /// Project name, identifier, or UUID. If omitted, creates a workspace page.
@@ -721,15 +729,19 @@ pub enum DocCmd {
         /// New document title.
         #[arg(long)]
         title: Option<String>,
-        /// New content (plain text, converted to HTML).
-        #[arg(long, short = 'c')]
+        /// New content as Markdown (alias of --content-md routes through the
+        /// same path; clap rejects passing both). BREAKING from v1.3.x:
+        /// markdown syntax is now interpreted. Use --content-raw for the
+        /// old plain-text behaviour.
+        #[arg(long, short = 'c', alias = "content-md")]
         content: Option<String>,
-        /// New content in native markdown — converted to HTML. Mutually
-        /// exclusive with --content.
+        /// New content as plain text (paragraphs from blank lines, single
+        /// newlines become `<br/>`, markdown syntax literal). v1.3.x
+        /// `--content` behaviour, kept under a new name.
         #[arg(long)]
-        content_md: Option<String>,
-        /// New content as raw HTML, stored verbatim. Mutually exclusive with
-        /// --content and --content-md.
+        content_raw: Option<String>,
+        /// New content as raw HTML, stored verbatim. Mutually exclusive
+        /// with --content (and its alias --content-md) and --content-raw.
         #[arg(long)]
         content_html: Option<String>,
         /// Project name, identifier, or UUID. If omitted, operates on a workspace page.
@@ -1458,7 +1470,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
             DocCmd::Create {
                 title,
                 content,
-                content_md,
+                content_raw,
                 content_html,
                 project,
                 dry_run,
@@ -1467,7 +1479,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     &client,
                     &title,
                     content.as_deref(),
-                    content_md.as_deref(),
+                    content_raw.as_deref(),
                     content_html.as_deref(),
                     project.as_deref(),
                     dry_run,
@@ -1479,7 +1491,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                 doc,
                 title,
                 content,
-                content_md,
+                content_raw,
                 content_html,
                 project,
                 dry_run,
@@ -1489,7 +1501,7 @@ pub async fn run(cli: Cli) -> Result<(), PlaneError> {
                     &doc,
                     title.as_deref(),
                     content.as_deref(),
-                    content_md.as_deref(),
+                    content_raw.as_deref(),
                     content_html.as_deref(),
                     project.as_deref(),
                     dry_run,
@@ -4400,17 +4412,26 @@ fn md_has_local_image(md: &str) -> bool {
 }
 
 /// Build a page description_html from the mutually exclusive content flags:
-/// `--content-html` verbatim, `--content-md` via md_to_html, `--content` plain
-/// text via body_to_html; an empty body becomes an empty paragraph (the API
-/// field is mandatory).
+/// `--content-html` verbatim, `--content` and `--content-md` via md_to_html,
+/// `--content-raw` plain text via body_to_html. `--content` and
+/// `--content-md` route through the same Markdown pipeline, so the two are
+/// aliases. An empty body becomes an empty paragraph (the API field is
+/// mandatory).
+/// Build a page description_html from the mutually exclusive content flags:
+/// `--content-html` verbatim, `--content` (and its clap alias
+/// `--content-md`) via md_to_html, `--content-raw` plain text via
+/// body_to_html. clap rejects passing both `--content` and `--content-md`
+/// because they share a field; this function only enforces the
+/// `content` vs `content_raw` vs `content_html` exclusivity. An empty
+/// body becomes an empty paragraph (the API field is mandatory).
 fn doc_description(
     content: Option<&str>,
-    content_md: Option<&str>,
+    content_raw: Option<&str>,
     content_html: Option<&str>,
 ) -> Result<String, PlaneError> {
     let given = [
         content.is_some(),
-        content_md.is_some(),
+        content_raw.is_some(),
         content_html.is_some(),
     ]
     .into_iter()
@@ -4418,35 +4439,46 @@ fn doc_description(
     .count();
     if given > 1 {
         return Err(PlaneError::Validation {
-            message: "--content, --content-md and --content-html are mutually exclusive.".into(),
-            hint: Some("Pass the page content via only one of them.".into()),
+            message:
+                "Pass the page content via only one of --content, --content-raw or --content-html."
+                    .into(),
+            hint: Some(
+                "--content (alias --content-md) is for Markdown; \
+                 --content-raw is for plain text (v1.3.x --content behaviour); \
+                 --content-html is for raw HTML."
+                    .into(),
+            ),
         });
     }
     if let Some(h) = content_html {
         return Ok(h.to_string());
     }
-    if let Some(m) = content_md {
-        return Ok(planebotcli_html::md_to_html(m));
+    if let Some(r) = content_raw {
+        return Ok(planebotcli_html::body_to_html(r));
     }
-    if let Some(c) = content {
-        return Ok(planebotcli_html::body_to_html(c));
+    if let Some(m) = content {
+        return Ok(planebotcli_html::md_to_html(m));
     }
     Ok("<p></p>".to_string())
 }
 
-// A content trio (plain/md/html) plus title/project/dry-run is inherent to the
-// command; grouping further would obscure the clap surface.
+// A content trio (content-and-md-merged / raw / html) plus title/project/dry-run
+// is inherent to the command; grouping further would obscure the clap surface.
 #[allow(clippy::too_many_arguments)]
 async fn cmd_doc_create(
     client: &PlaneClient,
     title: &str,
     content: Option<&str>,
-    content_md: Option<&str>,
+    content_raw: Option<&str>,
     content_html: Option<&str>,
     project: Option<&str>,
     dry_run: bool,
     json: bool,
 ) -> Result<(), PlaneError> {
+    // Reject mutually-exclusive content flags before doing any work (image
+    // preflight, scope resolution, page creation). clap rejects
+    // --content + --content-md at parse time because they share a field.
+    let description_html = doc_description(content, content_raw, content_html)?;
     let scope = page_scope(client, project).await?;
     if dry_run {
         let target = format!(
@@ -4454,7 +4486,10 @@ async fn cmd_doc_create(
             client.workspace(),
             scope_project_id(&scope).unwrap_or("(workspace page)")
         );
-        let images = content_md.map(scan_md_images).unwrap_or_default();
+        // --content-raw (plain text) and --content-html (raw HTML) skip the
+        // markdown image preflight; only the markdown path can carry
+        // local-image references that need uploading.
+        let images = content.map(scan_md_images).unwrap_or_default();
         let (report, errors) = render_image_report(&target, &images);
         eprint!("{report}");
         return dry_run_result(errors);
@@ -4462,7 +4497,7 @@ async fn cmd_doc_create(
     // A markdown body with local images needs the page id before uploading, so
     // the page is created first and patched once the assets exist (the same
     // create-then-patch shape as `wi create -i`).
-    let md = content_md.filter(|md| md_has_local_image(md));
+    let md = content.filter(|md| md_has_local_image(md));
     let write = match md {
         Some(_) => PageWrite {
             name: Some(title.to_string()),
@@ -4470,7 +4505,7 @@ async fn cmd_doc_create(
         },
         None => PageWrite {
             name: Some(title.to_string()),
-            description_html: Some(doc_description(content, content_md, content_html)?),
+            description_html: Some(description_html),
         },
     };
     let created = client.create_page(&scope, &write).await?;
@@ -4510,20 +4545,25 @@ fn dry_run_result(errors: usize) -> Result<(), PlaneError> {
     }
 }
 
-// A content trio (plain/md/html) plus issue/title/project is inherent to the
-// command; grouping further would obscure the clap surface.
+// A content quartet (plain/md/raw/html) plus issue/title/project is inherent
+// to the command; grouping further would obscure the clap surface.
 #[allow(clippy::too_many_arguments)]
 async fn cmd_doc_update(
     client: &PlaneClient,
     doc: &str,
     title: Option<&str>,
     content: Option<&str>,
-    content_md: Option<&str>,
+    content_raw: Option<&str>,
     content_html: Option<&str>,
     project: Option<&str>,
     dry_run: bool,
     json: bool,
 ) -> Result<(), PlaneError> {
+    let any_content = content.is_some() || content_raw.is_some() || content_html.is_some();
+    // Reject mutually-exclusive content flags before doing any work
+    // (scope resolution, page lookup). clap already rejects
+    // --content + --content-md at parse time because they share a field.
+    let _ = doc_description(content, content_raw, content_html)?;
     let scope = page_scope(client, project).await?;
     let found = resolve_page(client, &scope, doc).await?;
     if dry_run {
@@ -4534,7 +4574,9 @@ async fn cmd_doc_update(
             found.id,
             found.name.as_deref().unwrap_or("")
         );
-        let images = content_md.map(scan_md_images).unwrap_or_default();
+        // --content-raw and --content-html skip the markdown image preflight;
+        // only the markdown path can carry local-image references.
+        let images = content.map(scan_md_images).unwrap_or_default();
         let (report, errors) = render_image_report(&target, &images);
         eprint!("{report}");
         return dry_run_result(errors);
@@ -4545,14 +4587,14 @@ async fn cmd_doc_update(
     if let Some(t) = title.filter(|t| !t.is_empty()) {
         write.name = Some(t.to_string());
     }
-    if content.is_some() || content_md.is_some() || content_html.is_some() {
-        let html = match content_md.filter(|md| md_has_local_image(md)) {
+    if any_content {
+        let html = match content.filter(|md| md_has_local_image(md)) {
             Some(md) => {
                 let replaced =
                     upload_md_images(client, &found.id, scope_project_id(&scope), md).await?;
                 planebotcli_html::md_to_html(&replaced)
             }
-            None => doc_description(content, content_md, content_html)?,
+            None => doc_description(content, content_raw, content_html)?,
         };
         write.description_html = Some(html);
     }
@@ -5369,6 +5411,56 @@ mod tests {
         assert!(validate_date(None, "--target-date").unwrap().is_none());
         assert!(validate_date(Some("2026/09/15"), "--target-date").is_err());
         assert!(validate_date(Some("15-09-2026"), "--target-date").is_err());
+    }
+
+    #[test]
+    fn doc_description_dispatch() {
+        // No flag → empty paragraph (API field is mandatory).
+        assert_eq!(doc_description(None, None, None).unwrap(), "<p></p>");
+
+        // --content (and its clap alias --content-md) → md_to_html path.
+        // The markdown is interpreted: `# heading` becomes `<h1>heading</h1>`.
+        let md_html = doc_description(Some("# heading"), None, None).unwrap();
+        assert_eq!(md_html, "<h1>heading</h1>");
+
+        // --content-raw → body_to_html path: markdown syntax stays literal.
+        let raw_html = doc_description(None, Some("# heading"), None).unwrap();
+        assert_eq!(raw_html, "<p># heading</p>");
+
+        // --content-html → verbatim, no conversion.
+        assert_eq!(
+            doc_description(None, None, Some("<h1>x</h1>")).unwrap(),
+            "<h1>x</h1>"
+        );
+
+        // Empty content through each flag falls back to the literal empty
+        // string; callers guard with `<p></p>` upstream if the field must
+        // be non-empty.
+        assert_eq!(doc_description(Some(""), None, None).unwrap(), "");
+        assert_eq!(doc_description(None, Some(""), None).unwrap(), "");
+        assert_eq!(doc_description(None, None, Some("")).unwrap(), "");
+
+        // Mutual exclusivity: more than one content flag → Validation error
+        // mentioning every flag so the user can pick one.
+        let err = doc_description(Some("a"), Some("b"), None).unwrap_err();
+        match err {
+            PlaneError::Validation { message, hint } => {
+                assert!(message.contains("--content"), "message: {message}");
+                assert!(
+                    message.contains("--content-raw") && message.contains("--content-html"),
+                    "message: {message}"
+                );
+                assert!(
+                    hint.as_deref().unwrap_or("").contains("--content-md"),
+                    "hint should mention the alias"
+                );
+            }
+            other => panic!("expected Validation, got {other:?}"),
+        }
+        let err = doc_description(Some("a"), None, Some("b")).unwrap_err();
+        assert!(matches!(err, PlaneError::Validation { .. }));
+        let err = doc_description(None, Some("a"), Some("b")).unwrap_err();
+        assert!(matches!(err, PlaneError::Validation { .. }));
     }
 
     #[test]

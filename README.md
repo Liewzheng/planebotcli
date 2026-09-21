@@ -44,11 +44,11 @@ curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/planebotcli/r
 irm https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcli-installer.ps1 | iex
 ```
 
-Or download `planebotcli-x86_64-pc-windows-msvc.zip` from the latest release page and
-unzip it somewhere on your `%PATH%`. A double-click `.msi` installer is
-tracked in PLANECLI-63; for now, the shell installer above is the supported path.
-ARM64 Windows is not currently a release target — use the shell installer if you're
-on such a device.
+Or download `planebotcli-x86_64-pc-windows-msvc.msi` from the latest release page and
+double-click to install through the standard Windows installer UI. As an
+alternative, download `planebotcli-x86_64-pc-windows-msvc.zip` and unzip it
+somewhere on your `%PATH%`. ARM64 Windows is not currently a release target —
+use the shell installer if you're on such a device.
 
 ### From a checkout
 

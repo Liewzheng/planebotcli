@@ -299,6 +299,64 @@ jobs:
         with:
           name: artifacts-build-dmg-${{ matrix.target }}
           path: planebotcli-${{ matrix.target }}.dmg
+
+  # Build the Windows MSI installer via cargo-wix (cargo-dist 0.32's
+  # WiX-key detection does not pick up the GUIDs in planebotcli-cli's
+  # Cargo.toml under our workspace layout; running cargo-wix directly
+  # sidesteps that). The .msi lands on the GitHub release alongside
+  # cargo-dist's other installers.
+  build-windows-msi:
+    needs:
+      - plan
+      - build-local-artifacts
+    if: ${{ needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload' }}
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo-wix
+        # Pin the cargo-wix version so a future breaking change on
+        # crates.io can't silently break the release pipeline. Cache the
+        # installed binary by version + runner OS so subsequent runs skip
+        # the from-source compile (which is several minutes on windows-latest).
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/cargo-wix.exe
+          key: cargo-wix-0.3.9-windows-${{ runner.os }}
+      - name: Install cargo-wix
+        # Pinned to 0.3.9 (latest stable on crates.io). If this version is
+        # ever yanked, fail loudly rather than silently fall back to a
+        # newer version with potential breaking changes.
+        run: |
+          if [ ! -x ~/.cargo/bin/cargo-wix.exe ]; then
+            cargo install cargo-wix --version 0.3.9 --locked
+          fi
+      - name: Generate MSI
+        run: |
+          cargo wix --package planebotcli-cli --output msi --nocapture
+      - name: Verify MSI was produced
+        # cargo-wix exits 0 even when its output path is empty / different
+        # from the expected glob (e.g. after a future flag change). Fail
+        # loudly here rather than uploading nothing in the next step.
+        run: |
+          if [ -z "$(ls msi/*.msi 2>/dev/null)" ]; then
+            echo "::error::cargo wix produced no .msi file under msi/"
+            exit 1
+          fi
+          ls -la msi/
+      - name: Upload msi artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-build-msi-windows
+          path: msi/*.msi
   # Determines if we should publish/announce
   host:
     needs:
@@ -306,8 +364,9 @@ jobs:
       - build-local-artifacts
       - build-global-artifacts
       - build-mac-dmg
+      - build-windows-msi
     # Only run if we're "publishing", and only if plan, local and global didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') && (needs.build-mac-dmg.result == 'skipped' || needs.build-mac-dmg.result == 'success') }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') && (needs.build-mac-dmg.result == 'skipped' || needs.build-mac-dmg.result == 'success') && (needs.build-windows-msi.result == 'skipped' || needs.build-windows-msi.result == 'success') }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-22.04"

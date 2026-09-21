@@ -8,15 +8,17 @@ cargo-dist-version = "0.32.0"
 # CI backends to support
 ci = "github"
 # The installers to generate for each app.
-# `msi` is intentionally absent — cargo-dist 0.32's plan step requires WiX
-# `upgrade-guid` + `path-guid` in planebotcli-cli's Cargo.toml, but for an
-# unknown reason it does not detect keys that are present and parse-clean.
-# Drop msi for now; revisit in a follow-up release (custom cargo-wix or
-# newer cargo-dist may fix the parsing).
+# `msi` is handled by a separate `build-windows-msi` job in release.yml
+# (cargo-wix invoked directly on windows-latest); cargo-dist 0.32/0.33's
+# WiX-key detection on planebotcli-cli's Cargo.toml is broken under our
+# workspace layout, so the msi installer stays out of cargo-dist's
+# pipeline. The hand-edited release.yml glues the msi artifact into the
+# final release alongside cargo-dist's other installers.
 installers = ["shell", "powershell"]
 # Target platforms to build apps for (Rust target-triple syntax)
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # Accept hand-edits to the generated `release.yml` workflow (cargo-dist's
 # `plan` step rejects the release otherwise). The hand-edits here add the
-# `build-mac-dmg` job — dmg is not a built-in cargo-dist installer.
+# `build-mac-dmg` and `build-windows-msi` jobs — neither is a built-in
+# cargo-dist installer on planebotcli's setup.
 allow-dirty = ["ci"]

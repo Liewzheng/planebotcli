@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Added
 - `pbot skill show` / `pbot skill path` / `pbot skill version` print the AI skill (`skill/SKILL.md`) that ships with this build — vendored at compile time via `include_str!`, no network round-trip, no side-channel install. `pbot skill show --json` emits a one-line `{ path, version, skill_md }` object so installers / CI can parse it. Pair with the existing version-lint workflow (PR #26) — skill and CLI versions can no longer be out of sync in any direction.
 
+### Fixed
+- Windows `.msi` installer restored. The v1.4.x release intentionally
+  dropped `msi` because cargo-dist 0.32's plan step could not detect
+  `[package.metadata.wix]` GUIDs in planebotcli-cli's Cargo.toml. Instead
+  of waiting on a cargo-dist fix, the release workflow now has a dedicated
+  `build-windows-msi` job (windows-latest) that installs `cargo-wix`
+  and runs `cargo wix --package planebotcli-cli --output msi` directly.
+  The MSI artefact lands on the GitHub release alongside the other
+  cargo-dist installers; README's Windows section is restored to link
+  to `planebotcli-x86_64-pc-windows-msvc.msi`.
+
 ## [1.4.0] - 2026-09-21
 
 ### Changed

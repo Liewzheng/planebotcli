@@ -299,6 +299,43 @@ jobs:
         with:
           name: artifacts-build-dmg-${{ matrix.target }}
           path: planebotcli-${{ matrix.target }}.dmg
+
+  # Build the Windows MSI installer. cargo-dist 0.32's plan step requires
+  # WiX upgrade-guid / path-guid in planebotcli-cli's Cargo.toml but
+  # does not detect them under our workspace layout (the planebotcli
+  # workspace has [package] sections in transitive deps that confuse the
+  # parser). Rather than pin one to a cargo-dist version that might fix
+  # it, this job drives cargo-wix directly: install it, run it on
+  # planebotcli-cli, upload the .msi as an artifact the host job picks up.
+  build-windows-msi:
+    needs:
+      - plan
+      - build-local-artifacts
+    if: ${{ needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload' }}
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+      - name: Install cargo-wix
+        run: cargo install cargo-wix --locked
+      - name: Generate MSI
+        run: |
+          cargo wix --package planebotcli-cli --output msi --nocapture
+      - name: Upload msi artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-build-msi-windows
+          path: msi/*.msi
   # Determines if we should publish/announce
   host:
     needs:
@@ -306,8 +343,9 @@ jobs:
       - build-local-artifacts
       - build-global-artifacts
       - build-mac-dmg
+      - build-windows-msi
     # Only run if we're "publishing", and only if plan, local and global didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') && (needs.build-mac-dmg.result == 'skipped' || needs.build-mac-dmg.result == 'success') }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') && (needs.build-mac-dmg.result == 'skipped' || needs.build-mac-dmg.result == 'success') && (needs.build-windows-msi.result == 'skipped' || needs.build-windows-msi.result == 'success') }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-22.04"

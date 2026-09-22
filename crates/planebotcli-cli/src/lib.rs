@@ -21,7 +21,6 @@ use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 use planebotcli_cache::Cache;
-use regex::Regex;
 use planebotcli_client::{PageScope, PlaneClient};
 use planebotcli_core::{PlaneError, config_file_path, load_config, save_config};
 use planebotcli_format::{output_json, output_table};
@@ -33,6 +32,7 @@ use planebotcli_types::{
     LabelWrite, Module, ModuleWrite, Page, PageWrite, Project, ProjectWrite, State, StateWrite,
     WorkItem, WorkItemWrite,
 };
+use regex::Regex;
 use render::{
     Lookups, attachment_json, comment_json, compose_sequence_id, intake_status_label, intake_view,
     sub_issue_summaries, work_item_view,

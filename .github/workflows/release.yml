@@ -372,26 +372,31 @@ jobs:
           fi
       - name: Generate MSI
         # cargo-wix shells out to candle.exe / light.exe (WiX v3 toolset) to
-        # build the .msi. Same bash requirement as the steps above.
+        # build the .msi. The output goes to cargo-wix 0.3.9's default
+        # `target/wix/<name>.msi` (verified against the embedded template
+        # at `cargo-wix-0.3.9/src/create.rs` line 1985; we previously
+        # passed `--output msi` which placed the file under `msi/` and
+        # then our verify step looked under `target/wix/` — that mismatch
+        # silently produced no upload).
         shell: bash
         run: |
-          cargo wix --package planebotcli-cli --output msi --nocapture
+          cargo wix --package planebotcli-cli --nocapture
       - name: Verify MSI was produced
         # cargo-wix exits 0 even when its output path is empty / different
         # from the expected glob (e.g. after a future flag change). Fail
         # loudly here rather than uploading nothing in the next step.
         shell: bash
         run: |
-          if [ -z "$(ls msi/*.msi 2>/dev/null)" ]; then
-            echo "::error::cargo wix produced no .msi file under msi/"
+          if [ -z "$(ls target/wix/*.msi 2>/dev/null)" ]; then
+            echo "::error::cargo wix produced no .msi file under target/wix/"
             exit 1
           fi
-          ls -la msi/
+          ls -la target/wix/
       - name: Upload msi artifact
         uses: actions/upload-artifact@v7
         with:
           name: artifacts-build-msi-windows
-          path: msi/*.msi
+          path: target/wix/*.msi
   # Determines if we should publish/announce
   host:
     needs:

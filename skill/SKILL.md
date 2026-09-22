@@ -186,6 +186,25 @@ pbot comment ls ABC-123 --json
 pbot comment create ABC-123 --body "Fixed in PR #456" --json
 ```
 
+**Images in comments.** `--body-md` accepts the same Markdown the
+work-item description path does, including `![alt](src)` images.
+There is no `-i/--image` flag on `comment create`; embed an image in a
+comment by uploading it as an attachment first and dropping the
+returned uuid into the markdown body:
+
+```
+pbot attachment attach -p "Project" ABC-123 -f ./shot.png --json   # get uuid
+pbot comment create ABC-123 --body-md "see ![shot](./uuid)" --json
+```
+
+The web side parses the `src` value as a literal asset uuid only — a
+relative path like `./shot.png` will not resolve. To embed multiple
+images, repeat the `<img src='<uuid>'/>` markup in the body string
+(or use a temp file for the `--body "$(cat file)"` pattern shown
+below). For binary content like a PDF, link the asset via
+`attachment ls` + a Markdown link with the uuid as the destination
+rather than trying to inline the file.
+
 ## Updating tasks — etiquette
 
 **Progress updates go in comments, never in the description.** The description is the original

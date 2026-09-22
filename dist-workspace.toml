@@ -19,6 +19,6 @@ installers = ["shell", "powershell"]
 targets = ["aarch64-apple-darwin", "aarch64-unknown-linux-gnu", "x86_64-apple-darwin", "x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"]
 # Accept hand-edits to the generated `release.yml` workflow (cargo-dist's
 # `plan` step rejects the release otherwise). The hand-edits here add the
-# `build-mac-dmg` and `build-windows-msi` jobs — neither is a built-in
-# cargo-dist installer on planebotcli's setup.
+# `build-mac-dmg`, `build-windows-msi` and `build-linux-deb` jobs — none is
+# a built-in cargo-dist installer on planebotcli's setup.
 allow-dirty = ["ci"]

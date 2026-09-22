@@ -38,6 +38,22 @@ macOS this directory may require `sudo` to write to).
 curl --proto '=https' --tlsv1.2 -LsSf https://github.com/Liewzheng/planebotcli/releases/latest/download/planebotcli-installer.sh | sh
 ```
 
+Or download a `.deb` from the latest release page and install it with your
+package manager — on Debian / Ubuntu (x86_64):
+
+```sh
+apt install ./planebotcli-cli_<version>_amd64.deb      # or sudo apt install
+```
+
+The arm64 build is `planebotcli-cli_<version>_arm64.deb` on aarch64 hosts;
+`<version>` is the release's version number (e.g. `1.4.2`). Both are built by
+the `build-linux-deb` job in `release.yml` — natively on `ubuntu-22.04`
+(amd64) and `ubuntu-22.04-arm` (arm64), so no cross-compilation is involved.
+Each `.deb` ships both the `planebotcli` binary and the `pbot` binary in
+`/usr/bin/` — they are the two `[[bin]]` targets in
+`planebotcli-cli/Cargo.toml`, and `pbot` is a short alias of the same CLI,
+not a symlink.
+
 ### Windows
 
 ```powershell

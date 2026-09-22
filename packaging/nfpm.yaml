@@ -1,0 +1,40 @@
+# nfpm spec for the Linux .deb installer of planebotcli (PLANECLI-69).
+#
+# nfpm 2.43.1's CLI only exposes `-f, --config`, `-p, --packager`,
+# and `-t, --target` (see https://nfpm.goreleaser.com/docs/cmd/nfpm_package/);
+# every other field lives in this file. The workflow exports
+# `NFPM_VERSION` (e.g. "1.4.2", without the leading "v" — deb's
+# control field requires the version to start with a digit) and
+# `NFPM_ARCH` (a GOARCH value: "amd64" / "arm64") and nfpm expands
+# them here.
+#
+# Required fields (`name`, `arch`, `version`, `maintainer`) are
+# highlighted below. Everything else is sensible-default for a
+# Rust CLI binary.
+name: planebotcli-cli               # required
+arch: ${NFPM_ARCH}                  # required (GOARCH: amd64 | arm64 | ...)
+platform: linux
+version: ${NFPM_VERSION}            # required, must start with a digit
+version_schema: semver
+maintainer: planebotcli maintainers <liewzheng@qq.com>   # required
+description: |
+  Rust CLI for Plane.so — provides the planebotcli and pbot binaries.
+vendor: planebotcli
+homepage: https://github.com/Liewzheng/planebotcli
+license: MIT
+section: utils
+priority: optional
+
+# Both binaries ship as real files (Cargo has two [[bin]] targets:
+# `planebotcli` from src/main.rs, `pbot` from src/bin/pbot.rs).
+# src paths are relative to the directory nfpm is invoked from —
+# the workflow runs `cd deb-payload && nfpm pkg -f ../packaging/nfpm.yaml`.
+contents:
+  - src: ./usr/bin/planebotcli
+    dst: /usr/bin/planebotcli
+    file_info:
+      mode: 0755
+  - src: ./usr/bin/pbot
+    dst: /usr/bin/pbot
+    file_info:
+      mode: 0755

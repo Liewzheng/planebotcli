@@ -1,6 +1,9 @@
 # Rust / cargo build output
 target/
 
+# Staging tree for the .deb build (release.yml's build-linux-deb job)
+deb-payload/
+
 # Claude
 .claude/
 CLAUDE.md

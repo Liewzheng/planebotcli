@@ -24,7 +24,7 @@
   comment, and candle errors with CNDL0104. This file avoids the
   sequence entirely.
 -->
-<Wix xmlns='http://schemas.microsoft.com/wix/2006/main'>
+<Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
 
   <Product
     Name='planebotcli'

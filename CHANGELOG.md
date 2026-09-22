@@ -58,6 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   previous attempts `$(env.CARGO_PKG_VERSION)` (shell-style, invalid
   WiX) and `$(var.CargoPkgVersion)` (cargo-wix 0.3.9 doesn't define
   it) both fail with the same CNDL0150. Switched to `$(var.Version)`.
+- The `Release` workflow re-ran failed a third time with
+  `main.wxs(27) : error CNDL0199 : The Wix element has an incorrect
+  namespace of 'http://schemas.microsoft.com/wix/2006/main'. … Please
+  make the Wix element look like the following:
+  <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">`. The
+  `http://schemas.microsoft.com/wix/2006/main` namespace is not what
+  WiX 3 (and therefore cargo-wix 0.3.9) uses; the correct one is
+  `http://schemas.microsoft.com/wix/2006/wi`. Switched the `xmlns=`
+  attribute on `<Wix>` to match.
 
 ## [1.4.0] - 2026-09-21
 

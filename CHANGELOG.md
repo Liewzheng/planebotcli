@@ -50,6 +50,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   flags literally (`--release --target`), and WiX 3's strict-XML
   parser terminates any XML comment at the first `--`. Rewrote the
   comment without the literal sequence.
+- The `Release` workflow re-ran failed again with
+  `error CNDL0150 : Undefined preprocessor variable '$(var.CargoPkgVersion)'`
+  (line 29 of `wix/main.wxs`). cargo-wix 0.3.9 defines only
+  `$(var.Version)` (sourced from `src/templates/main.wxs.mustache` line
+  68, populated via `-dVersion=…` in `src/create.rs` line 539). The
+  previous attempts `$(env.CARGO_PKG_VERSION)` (shell-style, invalid
+  WiX) and `$(var.CargoPkgVersion)` (cargo-wix 0.3.9 doesn't define
+  it) both fail with the same CNDL0150. Switched to `$(var.Version)`.
 
 ## [1.4.0] - 2026-09-21
 

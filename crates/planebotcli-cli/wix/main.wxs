@@ -28,7 +28,7 @@
 
   <Product
     Name='planebotcli'
-    Version='$(var.CargoPkgVersion)'
+    Version='$(var.Version)'
     Manufacturer='planebotcli'
     UpgradeCode='E5552628-8F75-4A24-B783-84456E3D5561'>
 

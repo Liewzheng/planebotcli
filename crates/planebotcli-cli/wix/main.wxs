@@ -27,10 +27,13 @@
 <Wix xmlns='http://schemas.microsoft.com/wix/2006/wi'>
 
   <Product
+    Id='*'
     Name='planebotcli'
-    Version='$(var.Version)'
     Manufacturer='planebotcli'
-    UpgradeCode='E5552628-8F75-4A24-B783-84456E3D5561'>
+    UpgradeCode='E5552628-8F75-4A24-B783-84456E3D5561'
+    Language='1033'
+    Codepage='1252'
+    Version='$(var.Version)'>
 
     <Package
       InstallerVersion='300'

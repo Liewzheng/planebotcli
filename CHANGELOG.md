@@ -67,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   WiX 3 (and therefore cargo-wix 0.3.9) uses; the correct one is
   `http://schemas.microsoft.com/wix/2006/wi`. Switched the `xmlns=`
   attribute on `<Wix>` to match.
+- SKILL.md Comments section gained an "Images in comments"
+  paragraph documenting that `comment create` has no `-i/--image`
+  flag but accepts the same Markdown as `wi create/update`: upload
+  via `attachment attach`, then embed the returned uuid as
+  `<img src='<uuid>'/>` in the `--body-md` string. The web side
+  parses the `src` value as a literal asset uuid only. Closes the
+  "comment image workflow not documented in the skill" gap from
+  PLANECLI-10 feedback (comment by Jicai Liu, 2026-09-22).
 
 ## [1.4.0] - 2026-09-21
 

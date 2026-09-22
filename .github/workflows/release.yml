@@ -308,7 +308,6 @@ jobs:
   build-windows-msi:
     needs:
       - plan
-      - build-local-artifacts
     if: ${{ needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload' }}
     runs-on: windows-latest
     env:
@@ -322,6 +321,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          # WiX v3 toolset + the x86_64-pc-windows-msvc Rust target; cargo-wix
+          # shells out to candle.exe / light.exe to build the .msi.
       - name: Cache cargo-wix
         # Pin the cargo-wix version so a future breaking change on
         # crates.io can't silently break the release pipeline. Cache the
@@ -342,8 +343,18 @@ jobs:
           if [ ! -x ~/.cargo/bin/cargo-wix.exe ]; then
             cargo install cargo-wix --version 0.3.9 --locked
           fi
+      - name: Build planebotcli-cli (x86_64-pc-windows-msvc, release)
+        # cargo-wix 0.3.9 expects the binary at
+        # `target/x86_64-pc-windows-msvc/release/planebotcli.exe`
+        # (path encoded in `wix/main.wxs`). We build it from source here
+        # rather than pulling from cargo-dist's tarball — that keeps the
+        # path layout predictable across platforms.
+        shell: bash
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc \
+            --package planebotcli-cli --bin planebotcli
       - name: Generate MSI
-        # Same bash requirement as the install step above.
+        # Same bash requirement as the steps above.
         shell: bash
         run: |
           cargo wix --package planebotcli-cli --output msi --nocapture

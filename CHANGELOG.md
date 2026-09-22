@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   && git tag v1.4.2 && git push planebotcli :refs/tags/v1.4.2
   v1.4.2`) so the `Release` workflow re-runs against the fixed
   workflow.
+- v1.4.2's `Release` workflow re-run failed at the `cargo wix` step
+  with `[2] (Generic): There are no WXS files to create an installer`
+  — cargo-wix 0.3.9 reads `wix/main.wxs` from the package root and
+  planebotcli-cli didn't have one. Added a hand-written minimal v3
+  WiX template at `crates/planebotcli-cli/wix/main.wxs`
+  (Product, single Component for `planebotcli.exe`, single Feature,
+  perMachine InstallScope, hardcoded stable UpgradeCode +
+  path-guid UUIDs) and added a `Build planebotcli-cli
+  (x86_64-pc-windows-msvc, release)` step before `cargo wix` so
+  the binary lands at the path the template expects
+  (`target/x86_64-pc-windows-msvc/release/planebotcli.exe`).
 
 ## [1.4.0] - 2026-09-21
 

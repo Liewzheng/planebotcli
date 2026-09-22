@@ -14,8 +14,15 @@
 
   Binary path assumes `cargo wix` is invoked from the package root
   with `target/x86_64-pc-windows-msvc/release/planebotcli.exe` present.
-  The `build-windows-msi` job runs `cargo build --release --target
-  x86_64-pc-windows-msvc` before `cargo wix` so this path is filled.
+  The `build-windows-msi` job runs `cargo build` (release flag,
+  x86_64-pc-windows-msvc target) before `cargo wix` so this path is
+  filled.
+
+  NB: an earlier draft of this comment said "cargo build
+  release-flag target-flag" which WiX 3's strict-XML parser rejects:
+  the literal sequence "double-dash" inside an XML comment ends the
+  comment, and candle errors with CNDL0104. This file avoids the
+  sequence entirely.
 -->
 <Wix xmlns='http://schemas.microsoft.com/wix/2006/main'>
 

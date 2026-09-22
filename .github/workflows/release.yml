@@ -325,10 +325,14 @@ jobs:
       - name: Cache cargo registry + build target
         # Cache the registry + the x86_64-pc-windows-msvc build target so
         # the `cargo build --release --target …` below skips several minutes
-        # of incremental recompiles on cache hits.
+        # of incremental recompiles on cache hits. The path is
+        # `<workspace-root> -> <target-dir>`; the workspace root is the
+        # repo root, not `planebotcli-cli/` (which doesn't exist here —
+        # the crate is under crates/), so naming that directory left the
+        # cache permanently empty.
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: planebotcli-cli -> target
+          workspaces: . -> target
       - name: Cache cargo-wix
         # Pin the cargo-wix version so a future breaking change on
         # crates.io can't silently break the release pipeline. Cache the
@@ -397,6 +401,154 @@ jobs:
         with:
           name: artifacts-build-msi-windows
           path: target/wix/*.msi
+
+  # Build the Linux .deb installer via nfpm (goreleaser/nfpm). cargo-dist
+  # 0.32 doesn't ship .deb / .rpm natively, so this job drives nfpm
+  # directly — the same shape as build-mac-dmg / build-windows-msi.
+  #
+  # It has to live in *this* file: the `host` job below collects release
+  # assets from the `artifacts-*` of this same run, so a .deb built by a
+  # separate workflow would never reach the release page.
+  #
+  # nfpm 2.43.1's CLI only takes `-f, --config`, `-p, --packager` and
+  # `-t, --target`; every other field lives in `packaging/nfpm.yaml`,
+  # which expands `NFPM_VERSION` / `NFPM_ARCH` from the environment.
+  #
+  # Each matrix entry runs on a native runner (ubuntu-22.04 for amd64,
+  # ubuntu-22.04-arm for arm64 — the pairing cargo-dist picks for the
+  # same targets), so no cross-compilation toolchain is needed and both
+  # packages carry the same glibc 2.35 baseline.
+  build-linux-deb:
+    needs:
+      - plan
+      - build-local-artifacts
+    if: ${{ needs.plan.outputs.publishing == 'true' || fromJson(needs.plan.outputs.val).ci.github.pr_run_mode == 'upload' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            nfpm_arch: amd64
+            nfpm_asset_arch: x86_64
+            # SHA256 of nfpm_2.43.1_Linux_x86_64.tar.gz, from the
+            # checksums.txt goreleaser publishes on the same release.
+            nfpm_sha256: 2bc2c0b4a13ddbf8ffb0e1df36c43208db6d65a38832c9fe0de097f985653267
+          - runner: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+            nfpm_arch: arm64
+            nfpm_asset_arch: arm64
+            # SHA256 of nfpm_2.43.1_Linux_arm64.tar.gz.
+            nfpm_sha256: d963bd9965c054eb82e824f2780f422768c714a2ce7559d4bfb9b29de262b365
+    runs-on: ${{ matrix.runner }}
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - name: Install Rust toolchain
+        # No rustfmt / clippy components: this job only builds, and the
+        # lint gate lives in the CI workflow.
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo registry + build target
+        # The cargo workspace root is the repo root (Cargo.toml's
+        # `[workspace]`), so the cache path is `. -> target` — matching
+        # where `cargo build` actually writes.
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> target
+      - name: Build planebotcli-cli (${{ matrix.target }}, release)
+        # Both [[bin]] targets — planebotcli (src/main.rs) and pbot
+        # (src/bin/pbot.rs) — so the .deb ships the same surface as
+        # `cargo install --path crates/planebotcli-cli`.
+        run: |
+          set -euo pipefail
+          cargo build --release --target ${{ matrix.target }} --locked \
+            --package planebotcli-cli --bins
+      - name: Cache nfpm
+        # Keyed on version + arch so the extracted binary survives across
+        # runs instead of being re-downloaded on every release.
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/nfpm
+          key: nfpm-2.43.1-${{ runner.os }}-${{ matrix.nfpm_asset_arch }}
+      - name: Install nfpm
+        # Pinned to 2.43.1 (latest stable at the time of writing) and
+        # verified against the SHA256 goreleaser publishes in that
+        # release's checksums.txt — a swapped asset fails the build
+        # instead of silently changing what produces our packages.
+        env:
+          NFPM_SHA256: ${{ matrix.nfpm_sha256 }}
+        run: |
+          set -euo pipefail
+          if [ ! -x ~/.local/bin/nfpm ]; then
+            mkdir -p ~/.local/bin
+            ARCHIVE=/tmp/nfpm_2.43.1_Linux_${{ matrix.nfpm_asset_arch }}.tar.gz
+            curl -fsSL -o "$ARCHIVE" \
+              "https://github.com/goreleaser/nfpm/releases/download/v2.43.1/nfpm_2.43.1_Linux_${{ matrix.nfpm_asset_arch }}.tar.gz"
+            echo "${NFPM_SHA256}  ${ARCHIVE}" | sha256sum -c -
+            tar -xzf "$ARCHIVE" -C ~/.local/bin nfpm
+            chmod +x ~/.local/bin/nfpm
+            rm -f "$ARCHIVE"
+          fi
+          ~/.local/bin/nfpm --version
+      - name: Stage deb payload
+        # nfpm resolves contents[].src against the process cwd, so the
+        # package step below `cd`s into this tree. Both binaries are real
+        # files (Cargo's two [[bin]] targets), not a symlink.
+        run: |
+          set -euo pipefail
+          mkdir -p deb-payload/usr/bin
+          cp target/${{ matrix.target }}/release/planebotcli deb-payload/usr/bin/planebotcli
+          cp target/${{ matrix.target }}/release/pbot deb-payload/usr/bin/pbot
+          chmod 0755 deb-payload/usr/bin/planebotcli deb-payload/usr/bin/pbot
+          ls -la deb-payload/usr/bin/
+      - name: Derive .deb version + filename
+        id: deb
+        # A deb control version must start with a digit, so strip the
+        # tag's leading `v`. Refuse anything else rather than shipping a
+        # package apt cannot parse.
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          DEB_VERSION="${VERSION#v}"
+          if [[ "${DEB_VERSION}" != [0-9]* ]]; then
+            echo "::error::derived version '${DEB_VERSION}' does not start with a digit (ref '${VERSION}')"
+            exit 1
+          fi
+          echo "version=${DEB_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "name=planebotcli-cli_${DEB_VERSION}_${{ matrix.nfpm_arch }}.deb" >> "$GITHUB_OUTPUT"
+      - name: Package .deb
+        env:
+          NFPM_VERSION: ${{ steps.deb.outputs.version }}
+          NFPM_ARCH: ${{ matrix.nfpm_arch }}
+        run: |
+          set -euo pipefail
+          cd deb-payload
+          ~/.local/bin/nfpm pkg \
+            --config ../packaging/nfpm.yaml \
+            --packager deb \
+            --target "../${{ steps.deb.outputs.name }}"
+      - name: Verify .deb was produced
+        # nfpm exits 0 even when it silently drops files (e.g. after a
+        # future contents[] edit), so fail loudly here rather than
+        # uploading nothing in the next step.
+        run: |
+          set -euo pipefail
+          if [ ! -f "${{ steps.deb.outputs.name }}" ]; then
+            echo "::error::nfpm did not produce ${{ steps.deb.outputs.name }}"
+            exit 1
+          fi
+          ls -la "${{ steps.deb.outputs.name }}"
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: artifacts-build-deb-${{ matrix.target }}
+          path: ${{ steps.deb.outputs.name }}
+
   # Determines if we should publish/announce
   host:
     needs:
@@ -405,8 +557,9 @@ jobs:
       - build-global-artifacts
       - build-mac-dmg
       - build-windows-msi
+      - build-linux-deb
     # Only run if we're "publishing", and only if plan, local and global didn't fail (skipped is fine)
-    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') && (needs.build-mac-dmg.result == 'skipped' || needs.build-mac-dmg.result == 'success') && (needs.build-windows-msi.result == 'skipped' || needs.build-windows-msi.result == 'success') }}
+    if: ${{ always() && needs.plan.result == 'success' && needs.plan.outputs.publishing == 'true' && (needs.build-global-artifacts.result == 'skipped' || needs.build-global-artifacts.result == 'success') && (needs.build-local-artifacts.result == 'skipped' || needs.build-local-artifacts.result == 'success') && (needs.build-mac-dmg.result == 'skipped' || needs.build-mac-dmg.result == 'success') && (needs.build-windows-msi.result == 'skipped' || needs.build-windows-msi.result == 'success') && (needs.build-linux-deb.result == 'skipped' || needs.build-linux-deb.result == 'success') }}
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     runs-on: "ubuntu-22.04"

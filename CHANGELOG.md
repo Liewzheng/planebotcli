@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 - `pbot skill show` / `pbot skill path` / `pbot skill version` print the AI skill (`skill/SKILL.md`) that ships with this build — vendored at compile time via `include_str!`, no network round-trip, no side-channel install. `pbot skill show --json` emits a one-line `{ path, version, skill_md }` object so installers / CI can parse it. Pair with the existing version-lint workflow (PR #26) — skill and CLI versions can no longer be out of sync in any direction.
+- New `build-linux-deb` job in `release.yml` (runs alongside the existing
+  `build-windows-msi` / `build-mac-dmg` jobs) builds Debian packages for both
+  `x86_64-unknown-linux-gnu` (`amd64`, on `ubuntu-22.04`) and
+  `aarch64-unknown-linux-gnu` (`arm64`, on `ubuntu-22.04-arm`) via `nfpm`
+  (goreleaser's static single-binary packager). cargo-dist 0.32/0.33 don't
+  ship `.deb` natively, so we drive nfpm directly — same pattern as the .msi
+  and .dmg installer jobs. The `.deb` artifacts land on the GitHub release
+  page; README's Linux section gained an
+  `apt install ./planebotcli-cli_<version>_amd64.deb` snippet.
 
 ### Fixed
 - Windows `.msi` installer restored. The v1.4.x release intentionally
@@ -75,6 +84,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   those releases because no skill bump rode along, and v1.4.2's
   version-lint CI run flagged the drift. Bringing skill in sync with
   binary closes the drift loop opened by PLANECLI-67 / PR #28.
+- The Linux `.deb` installer now actually builds and reaches the release
+  page. `nfpm pkg` was invoked with `--name`, `--version`, `--maintainer`,
+  `--description`, `--license`, `--depends`, `--section`, `--priority`,
+  `--chdir` and `--output` — all unknown to nfpm 2.43.1, whose CLI only
+  exposes `-f, --config`, `-p, --packager` and `-t, --target`; the metadata
+  now lives in `packaging/nfpm.yaml` and the job runs
+  `cd deb-payload && nfpm pkg -f ../packaging/nfpm.yaml -p deb -t ../<output>`
+  (nfpm resolves `contents[].src` against the process cwd). Separately, the
+  job sat in its own workflow file while `release.yml`'s `host` job listed it
+  under `needs:` — GitHub Actions only resolves `needs:` within one file, so
+  every `Release` run failed with a workflow-file error and published no
+  artifacts at all. The job moved into `release.yml`.
+- `build-windows-msi`'s `Swatinem/rust-cache` path was
+  `planebotcli-cli -> target`, naming a directory that doesn't exist at the
+  repo root (the crate lives under `crates/`), so its cache never
+  populated. Corrected to `. -> target` — the documented
+  `<workspace-root> -> <target-dir>` form for a repo-root workspace, which
+  is where `cargo build` actually writes.
 
 ## [1.4.0] - 2026-09-21
 

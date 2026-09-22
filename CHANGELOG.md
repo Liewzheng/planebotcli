@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   (x86_64-pc-windows-msvc, release)` step before `cargo wix` so
   the binary lands at the path the template expects
   (`target/x86_64-pc-windows-msvc/release/planebotcli.exe`).
+- The `Release` workflow re-ran failed at the `cargo wix` step with
+  `CNDL0104: Not a valid source file; ... An XML comment cannot
+  contain '--', and '-' cannot be the last character` (line 17 of
+  `wix/main.wxs`). The comment block mentioned the cargo build CLI
+  flags literally (`--release --target`), and WiX 3's strict-XML
+  parser terminates any XML comment at the first `--`. Rewrote the
+  comment without the literal sequence.
 
 ## [1.4.0] - 2026-09-21
 

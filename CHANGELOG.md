@@ -67,6 +67,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   WiX 3 (and therefore cargo-wix 0.3.9) uses; the correct one is
   `http://schemas.microsoft.com/wix/2006/wi`. Switched the `xmlns=`
   attribute on `<Wix>` to match.
+- `skill/SKILL.md` frontmatter `version` bumped from `1.4.0` to
+  `1.4.2` and the matching callout / did the 'stale' check guidance
+  updated to match. The release was at `1.4.2` (msi workflow +
+  cargo-wix build fix landed via PRs #28 / #30 / #32 / #33 / #34 /
+  #35 + commit 1b8832d); the skill frontmatter had drifted through
+  those releases because no skill bump rode along, and v1.4.2's
+  version-lint CI run flagged the drift. Bringing skill in sync with
+  binary closes the drift loop opened by PLANECLI-67 / PR #28.
 
 ## [1.4.0] - 2026-09-21
 

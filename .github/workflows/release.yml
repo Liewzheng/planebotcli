@@ -322,6 +322,13 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - name: Cache cargo registry + build target
+        # Cache the registry + the x86_64-pc-windows-msvc build target so
+        # the `cargo build --release --target …` below skips several minutes
+        # of incremental recompiles on cache hits.
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: planebotcli-cli -> target
       - name: Cache cargo-wix
         # Pin the cargo-wix version so a future breaking change on
         # crates.io can't silently break the release pipeline. Cache the
@@ -342,8 +349,30 @@ jobs:
           if [ ! -x ~/.cargo/bin/cargo-wix.exe ]; then
             cargo install cargo-wix --version 0.3.9 --locked
           fi
+      - name: Build planebotcli-cli (x86_64-pc-windows-msvc, release)
+        # cargo-wix 0.3.9 expects the binary at
+        # `target/x86_64-pc-windows-msvc/release/planebotcli.exe`
+        # (path encoded in `wix/main.wxs`). `--locked` pins the dep graph
+        # from Cargo.lock so the build is reproducible. We build from
+        # source here rather than pulling from cargo-dist's tarball —
+        # that keeps the path layout predictable across platforms.
+        shell: bash
+        run: |
+          cargo build --release --target x86_64-pc-windows-msvc --locked \
+            --package planebotcli-cli --bin planebotcli
+      - name: Verify binary exists
+        # cargo-wix exits non-zero with a generic error if the binary
+        # path it expects is missing — fail loudly here so the next step
+        # shows a clear cause rather than the cargo-wix error.
+        shell: bash
+        run: |
+          if [ ! -f target/x86_64-pc-windows-msvc/release/planebotcli.exe ]; then
+            echo "::error::expected binary not found at target/x86_64-pc-windows-msvc/release/planebotcli.exe"
+            exit 1
+          fi
       - name: Generate MSI
-        # Same bash requirement as the install step above.
+        # cargo-wix shells out to candle.exe / light.exe (WiX v3 toolset) to
+        # build the .msi. Same bash requirement as the steps above.
         shell: bash
         run: |
           cargo wix --package planebotcli-cli --output msi --nocapture
